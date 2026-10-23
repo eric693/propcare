@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body { @apply bg-warm font-sans text-gray-800 antialiased; }
+}
+
+@layer components {
+  .card { @apply bg-white rounded-2xl shadow-sm border border-gray-100 p-4; }
+  .page-header { @apply flex flex-wrap items-center gap-3 mb-4; }
+  .page-header > :first-child { flex: 1 1 12rem; min-width: 0; }
+  .btn { @apply inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed; }
+  .btn-primary { @apply btn bg-brand text-white hover:bg-brand-dark; }
+  .btn-secondary { @apply btn bg-white text-brand border border-brand/40 hover:bg-brand-50; }
+  .btn-ghost { @apply btn text-gray-600 hover:bg-gray-100; }
+  .btn-danger { @apply btn bg-red-50 text-red-600 border border-red-200 hover:bg-red-100; }
+  .btn-sm { @apply px-2.5 py-1 text-xs rounded-lg; }
+  .input { @apply w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/25 focus:border-brand; }
+  .label { @apply block text-xs font-medium text-gray-500 mb-1; }
+  .badge { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap; }
+  .badge-ok { @apply badge bg-green-100 text-green-700; }
+  .badge-warn { @apply badge bg-amber-100 text-amber-700; }
+  .badge-bad { @apply badge bg-red-100 text-red-700; }
+  .badge-info { @apply badge bg-brand-light text-brand-dark; }
+  .badge-mute { @apply badge bg-gray-100 text-gray-500; }
+  .tbl { @apply w-full text-sm; }
+  .tbl th { @apply text-left text-xs font-medium text-gray-400 px-3 py-2 border-b border-gray-100 whitespace-nowrap; }
+  .tbl td { @apply px-3 py-2.5 border-b border-gray-50 align-top; }
+  .tbl tr:hover td { @apply bg-gray-50/60; }
+  .num { font-variant-numeric: tabular-nums; }
+}
+
+/* 手機：表格依內容撐開、左右滑動，不把欄位壓成一字一行 */
+@media (max-width: 767px) {
+  .overflow-x-auto > table { min-width: max-content; }
+  .overflow-x-auto > table th, .overflow-x-auto > table td { white-space: nowrap; }
+}
+
+@layer utilities {
+  .pt-safe { padding-top: env(safe-area-inset-top); }
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+}
+
+/* 列印：只印 .print-area（催告函、月報、收據） */
+@media print {
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 0 12mm; }
+  .no-print { display: none !important; }
+}
