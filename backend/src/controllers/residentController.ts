@@ -164,6 +164,33 @@ export async function residentCreateRepair(req: ResidentRequest, res: Response) 
   res.status(201).json(rep);
 }
 
+const repairSchema = z.object({
+  area: z.enum(['PUBLIC', 'PRIVATE']).default('PUBLIC'), location: z.string().trim().max(100).default(''),
+  category: z.string().trim().max(20).default('其他'), title: z.string().trim().min(1, '請填寫報修項目').max(100),
+  description: z.string().trim().max(2000).default(''),
+});
+
+/** 住戶只能修改或撤回自己送出、管理中心還沒處理（待處理）的報修 */
+async function ownNewRepair(req: ResidentRequest) {
+  const r = await prisma.repair.findFirst({ where: { id: req.params.id, residentId: req.resident!.id } });
+  if (!r) throw new HttpError(404, '找不到報修');
+  if (r.status !== 'NEW') throw new HttpError(400, '管理中心已開始處理，請直接聯絡管理中心');
+  return r;
+}
+
+export async function residentUpdateRepair(req: ResidentRequest, res: Response) {
+  const r = await ownNewRepair(req);
+  await prisma.repair.update({ where: { id: r.id }, data: parse(repairSchema, req.body) });
+  res.json({ ok: true });
+}
+
+export async function residentDeleteRepair(req: ResidentRequest, res: Response) {
+  const r = await ownNewRepair(req);
+  await prisma.repair.delete({ where: { id: r.id } });
+  await audit(req.cid, { type: 'resident', id: req.resident!.id, name: req.resident!.name }, '住戶撤回報修', r.repairNo);
+  res.json({ ok: true });
+}
+
 /** 社區財務公開：月收支與收繳率（管委會應定期公告財務） */
 export async function residentReport(req: ResidentRequest, res: Response) {
   const month = parse(zPeriod, String(req.query.month ?? todayStr().slice(0, 7)));

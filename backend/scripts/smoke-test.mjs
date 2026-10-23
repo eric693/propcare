@@ -32,7 +32,7 @@ const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 
 const period = today.slice(0, 7);
 const plus = (n) => { const d = new Date(`${today}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 
-let cid, other, uMgr, uCom;
+let cid, other, uMgr, uCom, uAdm;
 async function setup() {
   const pw = await bcrypt.hash('smoke12345', 6);
   const c = await prisma.community.create({ data: { name: `zz-smoke-${stamp}`, feeMode: 'AREA', feeRate: 100, reserveRatio: 20, dueDay: 28 } });
@@ -40,6 +40,7 @@ async function setup() {
   cid = c.id; other = o.id;
   uMgr = await prisma.user.create({ data: { username: `zz-mgr-${stamp}`, password: pw, name: '測試總幹事', role: 'MANAGER', communities: { create: { communityId: cid } } } });
   uCom = await prisma.user.create({ data: { username: `zz-com-${stamp}`, password: pw, name: '測試委員', role: 'COMMITTEE', communities: { create: { communityId: cid } } } });
+  uAdm = await prisma.user.create({ data: { username: `zz-adm-${stamp}`, password: pw, name: '測試管理員', role: 'ADMIN' } });
 }
 
 async function cleanup() {
@@ -171,6 +172,55 @@ async function main() {
   await call('GET', '/resident/report', { token: R });
   await call('GET', '/resident/meetings', { token: R });
   check('住戶報修單號', /^R\d{11}$/.test(rr.repairNo ?? ''), rr.repairNo);
+  await call('PUT', `/resident/repairs/${rr.id}`, { token: R, body: { title: '水龍頭漏水（補充）', area: 'PRIVATE', description: '廚房' } });
+  const rr2 = await call('POST', '/resident/repairs', { token: R, body: { title: '待撤回' } });
+  await call('DELETE', `/resident/repairs/${rr2.id}`, { token: R, label: '/resident/repairs/:id（撤回）' });
+  await call('PUT', `/repairs/${rr.id}`, { token: M, cid, body: { status: 'ASSIGNED' } });
+  await call('PUT', `/resident/repairs/${rr.id}`, { token: R, body: { title: 'x' }, expect: [400], label: '/resident/repairs/:id（已處理不能改）' });
+  await call('DELETE', `/resident/repairs/${rr.id}`, { token: R, expect: [400], label: '/resident/repairs/:id（已處理不能撤回）' });
+
+  // ── 編輯、刪除、改期（各模組）──
+  const A = (await call('POST', '/auth/login', { body: { username: uAdm.username, password: 'smoke12345' } })).token;
+  const b2 = bills.find((b) => b.unitId === U['A 2F-2']);
+  await call('DELETE', `/bills/${b2.id}`, { token: M, cid, label: '/bills/:id（無收款可刪）' });
+  await call('DELETE', `/bills/${b1.id}`, { token: M, cid, expect: [400], label: '/bills/:id（有收款紀錄不能刪）' });
+  const pays = await call('GET', `/payments?from=${period}-01&to=${today}`, { token: M, cid });
+  const live = pays.find((p) => !p.voided);
+  await call('PUT', `/payments/${live.id}`, { token: M, cid, body: { method: 'ATM', paidDate: `${period}-01`, note: '改日期' } });
+  const moved = await prisma.ledgerEntry.findFirst({ where: { paymentId: live.id } });
+  check('修改收款日期同步收支帳日期', moved?.date.toISOString().slice(0, 10) === `${period}-01`, moved?.date);
+  await call('PUT', `/payments/${pays.find((p) => p.voided).id}`, { token: M, cid, body: { note: 'x' }, expect: [400], label: '/payments/:id（已作廢不能改）' });
+  const upd = await call('PUT', `/ledger/${exp.id}`, { token: M, cid, body: { date: today, fund: 'MGMT', direction: 'OUT', category: '清潔費', amount: 900, description: '改金額' } });
+  check('已核准支出被總幹事修改後須重新核准', upd.reapprove === true, JSON.stringify(upd));
+  const autoEntry = await prisma.ledgerEntry.findFirst({ where: { communityId: cid, paymentId: { not: null } } });
+  await call('PUT', `/ledger/${autoEntry.id}`, { token: M, cid, body: { date: today, fund: 'MGMT', direction: 'IN', category: '其他收入', amount: 1 }, expect: [400], label: '/ledger/:id（收款自動入帳不能改）' });
+  await call('PUT', `/packages/${pk.packages[1].id}`, { token: M, cid, body: { unitId: U['A 2F-1'], carrier: '新竹物流', kind: 'COLD' } });
+  await call('DELETE', `/packages/${pk.packages[0].id}`, { token: M, cid, expect: [400], label: '/packages/:id（已領取不能刪）' });
+  await call('DELETE', `/packages/${pk.packages[1].id}`, { token: M, cid, label: '/packages/:id（登記錯誤刪除）' });
+  const bks = await call('GET', `/bookings?from=${today}&to=${plus(7)}`, { token: M, cid });
+  const bk = bks.find((x) => x.status === 'BOOKED');
+  const moved2 = await call('PUT', `/bookings/${bk.id}`, { token: M, cid, body: { facilityId: fac.id, unitId: bk.unitId, date: d, startTime: '08:00' } });
+  check('預約改期成功', moved2.startTime === '08:00', JSON.stringify(moved2).slice(0, 120));
+  await call('PUT', `/bookings/${moved2.id}`, { token: M, cid, body: { facilityId: fac.id, unitId: bk.unitId, date: d, startTime: '10:00' }, expect: [409], label: '/bookings/:id（改到額滿時段）' });
+  const still = await prisma.booking.findUnique({ where: { id: moved2.id } });
+  check('改期失敗時保留原預約', still?.status === 'BOOKED' && still.startTime === '08:00', JSON.stringify(still));
+  await call('PUT', `/repairs/${rep.id}`, { token: M, cid, body: { title: '走道燈不亮（改）', location: '2F', category: '照明' } });
+  await call('DELETE', `/repairs/${rep.id}`, { token: M, cid, expect: [403], label: '/repairs/:id（有費用須管理員刪）' });
+  await call('DELETE', `/repairs/${rep.id}`, { token: A, cid, label: '/repairs/:id（管理員刪除）' });
+  const delFac = await call('DELETE', `/facilities/${fac.id}`, { token: M, cid: cid, expect: [200], label: '/facilities/:id（有預約改停用）' });
+  check('有預約的設施改為停用', delFac.deactivated === true, JSON.stringify(delFac));
+  await call('POST', '/facilities', { token: M, cid, body: { name: '暫存設施' } });
+  const tmpFac = (await call('GET', '/facilities', { token: M, cid })).find((x) => x.name === '暫存設施');
+  const delFac2 = await call('DELETE', `/facilities/${tmpFac.id}`, { token: M, cid });
+  check('沒有預約的設施直接刪除', delFac2.deactivated === false, JSON.stringify(delFac2));
+  await call('DELETE', `/users/${uAdm.id}`, { token: A, expect: [400], label: '/users/:id（不能刪自己）' });
+  const tmpUser = await call('POST', '/users', { token: A, body: { username: `zz-tmp-${stamp}`, name: '暫存', role: 'MANAGER', password: 'tmp123456', communityIds: [cid] } });
+  await call('DELETE', `/users/${tmpUser.id}`, { token: A });
+  await call('POST', '/community/deactivate', { token: A, cid: other, body: { confirmName: '錯的名字' }, expect: [400], label: '/community/deactivate（名稱不符）' });
+  await call('POST', '/community/deactivate', { token: A, cid: other, body: { confirmName: `zz-smoke-other-${stamp}` } });
+  const afterDeact = await call('GET', '/communities', { token: A });
+  check('停用的社區不再出現在清單', !afterDeact.some((c) => c.id === other), '');
+
 }
 
 main()

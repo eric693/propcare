@@ -3,7 +3,7 @@ import { CheckCircle2, Plus } from 'lucide-react';
 import api from '../api/client';
 import { Page } from '../components/Layout';
 import HowTo from '../components/HowTo';
-import { act, Empty, ErrorBox, Field, FormModal, Loading, Tabs, toast, useLoad } from '../components/ui';
+import { act, Empty, ErrorBox, Field, Filter, FormModal, Loading, matches, SearchBox, Tabs, toast, Toolbar, useLoad } from '../components/ui';
 import { useAuth, useCanWrite } from '../context/AuthContext';
 import { d10, daysFrom, money, today } from '../lib/format';
 
@@ -33,16 +33,25 @@ function Inspections() {
   const { data: vendors } = useVendors();
   const [edit, setEdit] = useState<any>(null);
   const [done, setDone] = useState<any>(null);
-  const [showHistory, setShowHistory] = useState(false);
-  const list = (data ?? []).filter((i) => showHistory || i.status === 'PENDING');
+  const [q, setQ] = useState('');
+  const [kind, setKind] = useState('');
+  const [st, setSt] = useState('PENDING');
+  const [due, setDue] = useState('');
+  const list = (data ?? []).filter((i) => (!st || i.status === st) && (!kind || i.kind === kind)
+    && (!due || (due === 'overdue' ? i.status === 'PENDING' && daysFrom(i.dueDate) < 0 : i.status === 'PENDING' && daysFrom(i.dueDate) <= Number(due)))
+    && matches(q, i.title, i.kind, i.note, i.result, i.vendor?.name));
+  const kinds = [...new Set((data ?? []).map((i) => i.kind))].sort();
   return (
     <>
-      <div className="flex flex-wrap gap-2 mb-3 items-center">
-        <label className="flex items-center gap-2 text-sm text-gray-600"><input type="checkbox" checked={showHistory} onChange={(e) => setShowHistory(e.target.checked)} />顯示已完成紀錄</label>
-        {canWrite && <button className="btn-primary ml-auto" onClick={() => setEdit({ cycleMonths: 12, dueDate: today(), kind: '其他' })}><Plus className="w-4 h-4" />新增項目</button>}
-      </div>
+      <Toolbar count={data && `顯示 ${list.length} 項`}>
+        <SearchBox value={q} onChange={setQ} placeholder="搜尋項目、備註、結果、廠商" />
+        <Filter value={kind} onChange={setKind} all="全部類別" options={kinds.map((k) => [k, k])} />
+        <Filter value={st} onChange={setSt} all="全部狀態" options={[['PENDING', '待辦'], ['DONE', '已完成'], ['SKIPPED', '略過']]} />
+        <Filter value={due} onChange={setDue} all="不限期限" options={[['overdue', '已逾期'], ['30', '30 天內到期'], ['90', '90 天內到期']]} />
+        {canWrite && <button className="btn-primary" onClick={() => setEdit({ cycleMonths: 12, dueDate: today(), kind: '其他' })}><Plus className="w-4 h-4" />新增項目</button>}
+      </Toolbar>
       <ErrorBox error={error} />
-      {!data ? <Loading /> : !list.length ? <Empty>沒有項目</Empty> : (
+      {!data ? <Loading /> : !list.length ? <Empty>沒有符合條件的項目</Empty> : (
         <div className="card p-0 overflow-x-auto"><table className="tbl">
           <thead><tr><th>項目</th><th>期限</th><th>週期</th><th>廠商</th><th>狀態</th><th /></tr></thead>
           <tbody>{list.map((i) => {
@@ -57,9 +66,10 @@ function Inspections() {
                   ? <span className={left < 0 ? 'badge-bad' : left <= 30 ? 'badge-warn' : 'badge-mute'}>{left < 0 ? `逾期 ${-left} 天` : `${left} 天後`}</span>
                   : <span className="badge-ok">{i.status === 'DONE' ? '已完成' : '略過'} {d10(i.doneDate)}</span>}
                   {i.result && <div className="text-xs text-gray-400">{i.result}</div>}</td>
-                <td className="text-right whitespace-nowrap">{canWrite && i.status === 'PENDING' && <>
-                  <button className="btn-primary btn-sm" onClick={() => setDone(i)}><CheckCircle2 className="w-3.5 h-3.5" />完成</button>
+                <td className="text-right whitespace-nowrap">{canWrite && <>
+                  {i.status === 'PENDING' && <button className="btn-primary btn-sm" onClick={() => setDone(i)}><CheckCircle2 className="w-3.5 h-3.5" />完成</button>}
                   <button className="btn-ghost btn-sm" onClick={() => setEdit({ ...i, dueDate: d10(i.dueDate), vendorId: i.vendorId ?? '' })}>編輯</button>
+                  <button className="btn-ghost btn-sm text-red-500" onClick={() => confirm(`刪除「${i.title}」（期限 ${d10(i.dueDate)}）？`) && act(() => api.delete(`/inspections/${i.id}`), '已刪除').then(reload)}>刪除</button>
                 </>}</td>
               </tr>
             );
@@ -77,7 +87,6 @@ function Inspections() {
           <Field label="週期（月；0＝單次）"><input className="input" type="number" value={edit.cycleMonths} onChange={(e) => setEdit({ ...edit, cycleMonths: e.target.value })} /></Field>
           <Field label="廠商"><select className="input" value={edit.vendorId ?? ''} onChange={(e) => setEdit({ ...edit, vendorId: e.target.value })}><option value="">—</option>{(vendors ?? []).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></Field>
           <Field label="備註" full><textarea className="input h-20" value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} /></Field>
-          {edit.id && <div className="sm:col-span-2"><button className="btn-danger btn-sm" onClick={async () => { if (confirm('刪除這個項目？') && await act(() => api.delete(`/inspections/${edit.id}`), '已刪除')) { setEdit(null); reload(); } }}>刪除</button></div>}
         </FormModal>
       )}
       {done && <DoneForm i={done} onClose={() => setDone(null)} onSaved={reload} />}
@@ -106,19 +115,33 @@ function Contracts() {
   const { data, error, reload } = useLoad(() => api.get<any[]>('/contracts').then((r) => r.data), [cid]);
   const { data: vendors } = useVendors();
   const [edit, setEdit] = useState<any>(null);
+  const [q, setQ] = useState('');
+  const [kind, setKind] = useState('');
+  const [due, setDue] = useState('');
+  const list = (data ?? []).filter((k) => (!kind || k.kind === kind)
+    && (!due || (due === 'expired' ? k.daysLeft != null && k.daysLeft < 0 : due === 'soon' ? k.daysLeft != null && k.daysLeft >= 0 && k.daysLeft <= k.notifyDays : true))
+    && matches(q, k.title, k.vendor?.name, k.note, k.kind));
   return (
     <>
-      {canWrite && <button className="btn-primary mb-3" onClick={() => setEdit({ kind: '其他', notifyDays: 60 })}><Plus className="w-4 h-4" />新增合約</button>}
+      <Toolbar count={data && `顯示 ${list.length} / ${data.length} 份`}>
+        <SearchBox value={q} onChange={setQ} placeholder="搜尋合約名稱、廠商、備註" />
+        <Filter value={kind} onChange={setKind} all="全部類別" options={KINDS.map((k) => [k, k])} />
+        <Filter value={due} onChange={setDue} all="不限到期" options={[['soon', '即將到期'], ['expired', '已到期']]} />
+        {canWrite && <button className="btn-primary" onClick={() => setEdit({ kind: '其他', notifyDays: 60 })}><Plus className="w-4 h-4" />新增合約</button>}
+      </Toolbar>
       <ErrorBox error={error} />
-      {!data ? <Loading /> : !data.length ? <Empty>沒有合約</Empty> : (
+      {!data ? <Loading /> : !list.length ? <Empty>{data.length ? '沒有符合條件的合約' : '沒有合約'}</Empty> : (
         <div className="card p-0 overflow-x-auto"><table className="tbl">
           <thead><tr><th>合約</th><th>廠商</th><th className="text-right">月費</th><th>期間</th><th>到期</th><th /></tr></thead>
-          <tbody>{data.map((k) => (
+          <tbody>{list.map((k) => (
             <tr key={k.id}>
               <td><b>{k.title}</b><div className="text-xs text-gray-400">{k.kind}</div></td><td>{k.vendor?.name ?? '-'}</td>
               <td className="num text-right">{money(k.monthlyAmount)}</td><td className="text-xs whitespace-nowrap">{d10(k.startDate)} ～ {d10(k.endDate)}</td>
               <td>{k.daysLeft == null ? '-' : <span className={k.daysLeft < 0 ? 'badge-bad' : k.daysLeft <= k.notifyDays ? 'badge-warn' : 'badge-mute'}>{k.daysLeft < 0 ? '已到期' : `${k.daysLeft} 天`}</span>}</td>
-              <td className="text-right">{canWrite && <button className="btn-ghost btn-sm" onClick={() => setEdit({ ...k, startDate: d10(k.startDate), endDate: d10(k.endDate), vendorId: k.vendorId ?? '' })}>編輯</button>}</td>
+              <td className="text-right whitespace-nowrap">{canWrite && <>
+                <button className="btn-ghost btn-sm" onClick={() => setEdit({ ...k, startDate: d10(k.startDate), endDate: d10(k.endDate), vendorId: k.vendorId ?? '' })}>編輯</button>
+                <button className="btn-ghost btn-sm text-red-500" onClick={() => confirm(`刪除合約「${k.title}」？`) && act(() => api.delete(`/contracts/${k.id}`), '已刪除').then(reload)}>刪除</button>
+              </>}</td>
             </tr>
           ))}</tbody>
         </table></div>
@@ -136,7 +159,7 @@ function Contracts() {
           <Field label="開始日"><input className="input" type="date" value={edit.startDate ?? ''} onChange={(e) => setEdit({ ...edit, startDate: e.target.value })} /></Field>
           <Field label="到期日"><input className="input" type="date" value={edit.endDate ?? ''} onChange={(e) => setEdit({ ...edit, endDate: e.target.value })} /></Field>
           <Field label="備註" full><textarea className="input h-16" value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} /></Field>
-          {edit.id && <div className="sm:col-span-2"><button className="btn-danger btn-sm" onClick={async () => { if (confirm('停用這份合約？') && await act(() => api.delete(`/contracts/${edit.id}`), '已停用')) { setEdit(null); reload(); } }}>停用合約</button></div>}
+          
         </FormModal>
       )}
     </>
@@ -147,14 +170,24 @@ function VendorList() {
   const canWrite = useCanWrite();
   const { data, error, reload } = useVendors();
   const [edit, setEdit] = useState<any>(null);
+  const [q, setQ] = useState('');
+  const [kind, setKind] = useState('');
+  const list = (data ?? []).filter((v) => (!kind || v.kind === kind) && matches(q, v.name, v.contact, v.phone, v.taxId, v.note));
   return (
     <>
-      {canWrite && <button className="btn-primary mb-3" onClick={() => setEdit({ kind: '其他' })}><Plus className="w-4 h-4" />新增廠商</button>}
+      <Toolbar count={data && `顯示 ${list.length} / ${data.length} 家`}>
+        <SearchBox value={q} onChange={setQ} placeholder="搜尋名稱、聯絡人、電話、統編" />
+        <Filter value={kind} onChange={setKind} all="全部類別" options={KINDS.map((k) => [k, k])} />
+        {canWrite && <button className="btn-primary" onClick={() => setEdit({ kind: '其他' })}><Plus className="w-4 h-4" />新增廠商</button>}
+      </Toolbar>
       <ErrorBox error={error} />
-      {!data ? <Loading /> : !data.length ? <Empty>沒有廠商</Empty> : (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">{data.map((v) => (
+      {!data ? <Loading /> : !list.length ? <Empty>{data.length ? '沒有符合條件的廠商' : '沒有廠商'}</Empty> : (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">{list.map((v) => (
           <div key={v.id} className="card">
-            <div className="flex items-center gap-2"><span className="badge-mute">{v.kind}</span><b>{v.name}</b>{canWrite && <button className="btn-ghost btn-sm ml-auto" onClick={() => setEdit(v)}>編輯</button>}</div>
+            <div className="flex items-center gap-2"><span className="badge-mute">{v.kind}</span><b>{v.name}</b>{canWrite && <span className="ml-auto flex">
+              <button className="btn-ghost btn-sm" onClick={() => setEdit(v)}>編輯</button>
+              <button className="btn-ghost btn-sm text-red-500" onClick={() => confirm(`刪除廠商「${v.name}」？`) && act(() => api.delete(`/vendors/${v.id}`), '已刪除').then(reload)}>刪除</button>
+            </span>}</div>
             <div className="text-sm text-gray-500 mt-1">{v.contact} {v.phone && <a className="text-brand" href={`tel:${v.phone}`}>{v.phone}</a>}</div>
             {v.taxId && <div className="text-xs text-gray-400">統編 {v.taxId}</div>}
             {v.note && <div className="text-xs text-gray-400 mt-1">{v.note}</div>}
@@ -172,7 +205,7 @@ function VendorList() {
           <Field label="聯絡人"><input className="input" value={edit.contact ?? ''} onChange={(e) => setEdit({ ...edit, contact: e.target.value })} /></Field>
           <Field label="電話"><input className="input" value={edit.phone ?? ''} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} /></Field>
           <Field label="備註" full><input className="input" value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} /></Field>
-          {edit.id && <div className="sm:col-span-2"><button className="btn-danger btn-sm" onClick={async () => { if (confirm('停用這家廠商？') && await act(() => api.delete(`/vendors/${edit.id}`), '已停用')) { setEdit(null); reload(); } }}>停用廠商</button></div>}
+          
         </FormModal>
       )}
     </>

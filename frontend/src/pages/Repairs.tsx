@@ -3,7 +3,7 @@ import { Plus } from 'lucide-react';
 import api from '../api/client';
 import { Page } from '../components/Layout';
 import HowTo from '../components/HowTo';
-import { Empty, ErrorBox, Field, FormModal, Loading, Tabs, useLoad } from '../components/ui';
+import { act, Empty, ErrorBox, Field, Filter, FormModal, Loading, matches, SearchBox, Tabs, Toolbar, useLoad } from '../components/ui';
 import { useAuth, useCanWrite } from '../context/AuthContext';
 import { dt, L, money } from '../lib/format';
 import { Unit } from '../types';
@@ -16,25 +16,41 @@ export default function Repairs() {
   const canWrite = useCanWrite();
   const [status, setStatus] = useState('OPEN');
   const { data, error, reload } = useLoad(() => api.get<any[]>(`/repairs?status=${status}`).then((r) => r.data), [cid, status]);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<any>(null);
   const [handle, setHandle] = useState<any>(null);
+  const [q, setQ] = useState('');
+  const [pri, setPri] = useState('');
+  const [cat, setCat] = useState('');
+  const [area, setArea] = useState('');
+  const list = (data ?? []).filter((r) => (!pri || r.priority === pri) && (!cat || r.category === cat) && (!area || r.area === area)
+    && matches(q, r.repairNo, r.title, r.description, r.location, r.unit?.label, r.resident?.name, r.vendor?.name, r.assignee));
   return (
-    <Page title="報修" actions={canWrite && <button className="btn-primary" onClick={() => setAdding(true)}><Plus className="w-4 h-4" />登記報修</button>}>
+    <Page title="報修" actions={canWrite && <button className="btn-primary" onClick={() => setAdding({})}><Plus className="w-4 h-4" />登記報修</button>}>
       <HowTo module="repairs" />
       <Tabs value={status} onChange={setStatus} items={[['OPEN', '處理中'], ['DONE', '已完工'], ['CLOSED', '已結案'], ['ALL', '全部']]} />
+      <Toolbar count={data && `顯示 ${list.length} / ${data.length} 筆`}>
+        <SearchBox value={q} onChange={setQ} placeholder="搜尋單號、項目、位置、戶別、報修人、廠商" />
+        <Filter value={pri} onChange={setPri} all="全部緊急程度" options={L.priority} />
+        <Filter value={cat} onChange={setCat} all="全部類別" options={CATS.map((c) => [c, c])} />
+        <Filter value={area} onChange={setArea} all="全部區域" options={L.area} />
+      </Toolbar>
       <ErrorBox error={error} />
-      {!data ? <Loading /> : !data.length ? <Empty>沒有報修</Empty> : (
-        <div className="space-y-3">{data.map((r) => (
+      {!data ? <Loading /> : !list.length ? <Empty>{data.length ? '沒有符合條件的報修' : '沒有報修'}</Empty> : (
+        <div className="space-y-3">{list.map((r) => (
           <div key={r.id} className="card">
             <div className="flex flex-wrap items-center gap-2">
               <span className={L.priorityCls[r.priority]}>{L.priority[r.priority]}</span>
               <span className={L.repairCls[r.status]}>{L.repair[r.status]}</span>
               <span className="text-xs text-gray-400 font-mono">{r.repairNo}</span>
               <span className="text-xs text-gray-400">{dt(r.createdAt)}</span>
-              {canWrite && <button className="btn-secondary btn-sm ml-auto" onClick={() => setHandle(r)}>處理</button>}
+              {canWrite && <span className="ml-auto flex gap-1">
+                <button className="btn-secondary btn-sm" onClick={() => setHandle(r)}>處理</button>
+                <button className="btn-ghost btn-sm" onClick={() => setAdding(r)}>編輯</button>
+                <button className="btn-ghost btn-sm text-red-500" onClick={() => confirm(`刪除報修 ${r.repairNo}「${r.title}」？處理紀錄會一併刪除。`) && act(() => api.delete(`/repairs/${r.id}`), '已刪除').then(reload)}>刪除</button>
+              </span>}
             </div>
             <div className="font-semibold mt-1.5">{r.title}</div>
-            <div className="text-sm text-gray-500">{r.unit?.label ?? '公共區域'}・{L.area[r.area]}・{r.category}{r.location && `・${r.location}`}</div>
+            <div className="text-sm text-gray-500">{[r.unit?.label, L.area[r.area], r.category, r.location].filter(Boolean).join('・')}</div>
             {r.description && <div className="text-sm text-gray-600 mt-1">{r.description}</div>}
             <div className="text-xs text-gray-500 mt-1">{r.resident && `報修人 ${r.resident.name} ${r.resident.phone}`}{r.vendor && `　廠商 ${r.vendor.name} ${r.vendor.phone}`}{r.assignee && `　${r.assignee}`}{r.cost > 0 && `　費用 ${money(r.cost)} 元`}</div>
             {r.logs.length > 0 && (
@@ -45,19 +61,24 @@ export default function Repairs() {
           </div>
         ))}</div>
       )}
-      {adding && <AddRepair onClose={() => setAdding(false)} onSaved={reload} />}
+      {adding && <AddRepair r={adding} onClose={() => setAdding(null)} onSaved={reload} />}
       {handle && <Handle r={handle} onClose={() => setHandle(null)} onSaved={reload} />}
     </Page>
   );
 }
 
-function AddRepair({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+function AddRepair({ r, onClose, onSaved }: { r: any; onClose: () => void; onSaved: () => void }) {
   const { cid } = useAuth();
   const { data: units } = useLoad(() => api.get<Unit[]>('/units').then((r) => r.data), [cid]);
-  const [f, setF] = useState({ unitId: '', area: 'PUBLIC', location: '', category: '水電', title: '', description: '', priority: 'NORMAL' });
+  const [f, setF] = useState(r.id
+    ? { unitId: r.unitId ?? '', area: r.area, location: r.location, category: r.category, title: r.title, description: r.description, priority: r.priority }
+    : { unitId: '', area: 'PUBLIC', location: '', category: '水電', title: '', description: '', priority: 'NORMAL' });
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
   return (
-    <FormModal title="登記報修" onClose={onClose} onSubmit={async () => { await api.post('/repairs', { ...f, unitId: f.unitId || null }); onSaved(); }}>
+    <FormModal title={r.id ? `編輯報修 ${r.repairNo}` : '登記報修'} onClose={onClose} onSubmit={async () => {
+      const body = { ...f, unitId: f.unitId || null };
+      await (r.id ? api.put(`/repairs/${r.id}`, body) : api.post('/repairs', body)); onSaved();
+    }}>
       <Field label="區域"><select className="input" value={f.area} onChange={set('area')}><option value="PUBLIC">公共區域</option><option value="PRIVATE">住戶室內</option></select></Field>
       <Field label="相關戶別（選填）"><select className="input" value={f.unitId} onChange={set('unitId')}><option value="">—</option>{(units ?? []).map((u) => <option key={u.id} value={u.id}>{u.label}</option>)}</select></Field>
       <Field label="類別"><select className="input" value={f.category} onChange={set('category')}>{CATS.map((c) => <option key={c}>{c}</option>)}</select></Field>

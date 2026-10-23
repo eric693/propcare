@@ -66,6 +66,16 @@ export async function updateBill(req: AuthRequest, res: Response) {
   res.json({ ok: true });
 }
 
+/** 刪除帳單：只限從未有過收款紀錄（含已作廢）的帳單；有收款紀錄的只能作廢，保留稽核軌跡 */
+export async function deleteBill(req: AuthRequest, res: Response) {
+  const bill = await prisma.feeBill.findFirst({ where: { id: req.params.id, communityId: req.cid! }, include: { unit: true, _count: { select: { payments: true } } } });
+  if (!bill) throw new HttpError(404, '找不到帳單');
+  if (bill._count.payments) throw new HttpError(400, '這張帳單有收款紀錄，只能作廢，不能刪除');
+  await prisma.feeBill.delete({ where: { id: bill.id } });
+  await audit(req.cid, actor(req), '刪除帳單', `${bill.unit.label} ${bill.period}`);
+  res.json({ ok: true });
+}
+
 export async function pay(req: AuthRequest, res: Response) {
   const b = parse(z.object({
     billId: z.string(),
@@ -118,6 +128,23 @@ export async function cancelPayment(req: AuthRequest, res: Response) {
   res.json({ ok: true });
 }
 
+/** 修改收款：方式、日期、備註（金額要改請作廢後重收，避免帳不平）；收支帳日期一併更新 */
+export async function updatePayment(req: AuthRequest, res: Response) {
+  const b = parse(z.object({
+    method: z.enum(['CASH', 'TRANSFER', 'ATM', 'STORE', 'OTHER']).optional(),
+    paidDate: zDate.optional(), note: z.string().trim().max(200).optional(),
+  }), req.body);
+  const p = await prisma.feePayment.findFirst({ where: { id: req.params.id, communityId: req.cid! } });
+  if (!p) throw new HttpError(404, '找不到收款紀錄');
+  if (p.voided) throw new HttpError(400, '已作廢的收款不能修改');
+  await prisma.$transaction([
+    prisma.feePayment.update({ where: { id: p.id }, data: { ...b, ...(b.paidDate ? { paidDate: toDate(b.paidDate) } : {}) } }),
+    ...(b.paidDate ? [prisma.ledgerEntry.updateMany({ where: { paymentId: p.id }, data: { date: toDate(b.paidDate) } })] : []),
+  ]);
+  await audit(req.cid, actor(req), '修改收款', `${p.receiptNo} ${JSON.stringify(b)}`);
+  res.json({ ok: true });
+}
+
 export async function getArrears(req: AuthRequest, res: Response) {
   res.json(await arrears(req.cid!));
 }
@@ -163,6 +190,26 @@ export async function createLedger(req: AuthRequest, res: Response) {
   });
   await audit(req.cid, actor(req), b.direction === 'OUT' ? '登錄支出（待核准）' : '登錄收入', `${b.category} ${b.amount}`);
   res.status(201).json(e);
+}
+
+/** 修改收支：收款自動產生的不能改；已核准的支出改過後要重新核准（物業公司管理員除外） */
+export async function updateLedger(req: AuthRequest, res: Response) {
+  const b = parse(z.object({
+    date: zDate, fund: z.enum(['MGMT', 'RESERVE']), direction: z.enum(['IN', 'OUT']),
+    category: z.string().trim().min(1, '請選擇科目').max(30), amount: z.coerce.number().int().positive('金額必須大於 0'),
+    description: z.string().trim().max(300).default(''), vendorId: z.string().nullable().optional(), voucherNo: z.string().trim().max(30).default(''),
+  }), req.body);
+  const e = await prisma.ledgerEntry.findFirst({ where: { id: req.params.id, communityId: req.cid! } });
+  if (!e) throw new HttpError(404, '找不到這筆帳');
+  if (e.paymentId) throw new HttpError(400, '管理費收款自動產生的帳不能修改，請到收款紀錄處理');
+  if (b.category === '管理費收入' || b.category === '公共基金提撥') throw new HttpError(400, '管理費收入請在「管理費」頁登錄收款');
+  const reapprove = b.direction === 'OUT' && req.user!.role !== 'ADMIN';
+  await prisma.ledgerEntry.update({
+    where: { id: e.id },
+    data: { ...b, vendorId: b.vendorId || null, date: toDate(b.date), ...(reapprove ? { approval: 'PENDING', approvedBy: '' } : b.direction === 'IN' ? { approval: 'APPROVED' } : {}) },
+  });
+  await audit(req.cid, actor(req), '修改收支', `${dateStr(e.date)} ${e.category} ${e.amount} → ${b.category} ${b.amount}`);
+  res.json({ ok: true, reapprove });
 }
 
 export async function approveLedger(req: AuthRequest, res: Response) {

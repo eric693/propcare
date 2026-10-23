@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { errMsg } from '../api/client';
 
 export function Modal({ title, onClose, children, wide, footer }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean; footer?: ReactNode }) {
@@ -124,4 +124,37 @@ export function toast(msg: string, bad = false) {
 /** 執行動作並提示結果 */
 export async function act(fn: () => Promise<unknown>, ok?: string) {
   try { await fn(); if (ok) toast(ok); return true; } catch (e) { toast(errMsg(e), true); return false; }
+}
+
+/** 搜尋：多個欄位任一包含關鍵字（不分大小寫，空白分隔的每個字都要符合） */
+export function matches(q: string, ...fields: unknown[]): boolean {
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = fields.map((f) => String(f ?? '')).join(' ').toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
+export function SearchBox({ value, onChange, placeholder = '搜尋' }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <div className="relative flex-1 min-w-[12rem] max-w-sm">
+      <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+      <input className="input pl-9 pr-8" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+      {value && <button type="button" onClick={() => onChange('')} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-gray-100" aria-label="清除搜尋"><X className="w-3.5 h-3.5 text-gray-400" /></button>}
+    </div>
+  );
+}
+
+/** 篩選下拉：第一個選項是「全部」 */
+export function Filter({ value, onChange, all, options }: { value: string; onChange: (v: string) => void; all: string; options: string[][] | Record<string, string> }) {
+  const opts = Array.isArray(options) ? options : Object.entries(options);
+  return (
+    <select className="input w-auto" value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">{all}</option>
+      {opts.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+    </select>
+  );
+}
+
+export function Toolbar({ children, count }: { children: ReactNode; count?: ReactNode }) {
+  return <div className="flex flex-wrap items-center gap-2 mb-3">{children}{count != null && <span className="text-xs text-gray-400 ml-auto">{count}</span>}</div>;
 }

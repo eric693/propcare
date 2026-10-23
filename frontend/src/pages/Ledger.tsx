@@ -3,7 +3,7 @@ import { Check, Plus, Printer, Trash2, X } from 'lucide-react';
 import api from '../api/client';
 import { Page } from '../components/Layout';
 import HowTo from '../components/HowTo';
-import { act, Empty, ErrorBox, Field, FormModal, Loading, Stat, Tabs, useLoad } from '../components/ui';
+import { act, Empty, ErrorBox, Field, Filter, FormModal, Loading, matches, SearchBox, Stat, Tabs, toast, Toolbar, useLoad } from '../components/ui';
 import { useAuth, useCanWrite } from '../context/AuthContext';
 import { addMonth, d10, L, money, thisMonth, today } from '../lib/format';
 
@@ -32,9 +32,16 @@ function Entries({ month }: { month: string }) {
   const canWrite = useCanWrite();
   const [fund, setFund] = useState('');
   const { data, error, reload } = useLoad(() => api.get<any>(`/ledger?month=${month}&fund=${fund}`).then((r) => r.data), [cid, month, fund]);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<any>(null);
+  const [q, setQ] = useState('');
+  const [dir, setDir] = useState('');
+  const [cat, setCat] = useState('');
+  const [appr, setAppr] = useState('');
   const canApprove = user?.role !== 'MANAGER';
-  const rows: any[] = data?.rows ?? [];
+  const all: any[] = data?.rows ?? [];
+  const rows = all.filter((r) => (!dir || r.direction === dir) && (!cat || r.category === cat) && (!appr || r.approval === appr)
+    && matches(q, r.category, r.description, r.vendor?.name, r.voucherNo, r.createdBy, r.approvedBy));
+  const cats = [...new Set(all.map((r) => r.category))].sort();
   const sum = (dir: string) => rows.filter((r) => r.direction === dir && r.approval === 'APPROVED').reduce((s, r) => s + r.amount, 0);
   return (
     <>
@@ -47,11 +54,15 @@ function Entries({ month }: { month: string }) {
             <Stat label={`${month} 收入`} value={money(sum('IN'))} tone="ok" />
             <Stat label={`${month} 支出`} value={money(sum('OUT'))} sub={`待核准 ${rows.filter((r) => r.approval === 'PENDING').length} 筆`} />
           </div>
-          <div className="flex flex-wrap gap-2 mb-3">
-            <select className="input w-auto" value={fund} onChange={(e) => setFund(e.target.value)}><option value="">兩個帳戶</option><option value="MGMT">管理費帳戶</option><option value="RESERVE">公共基金</option></select>
-            {canWrite && <button className="btn-primary ml-auto" onClick={() => setAdding(true)}><Plus className="w-4 h-4" />記一筆</button>}
-          </div>
-          {!rows.length ? <Empty>{month} 沒有收支紀錄</Empty> : (
+          <Toolbar count={`顯示 ${rows.length} / ${all.length} 筆`}>
+            <SearchBox value={q} onChange={setQ} placeholder="搜尋科目、說明、廠商、憑證號碼" />
+            <Filter value={fund} onChange={setFund} all="兩個帳戶" options={L.fund} />
+            <Filter value={dir} onChange={setDir} all="收入與支出" options={[['IN', '收入'], ['OUT', '支出']]} />
+            <Filter value={cat} onChange={setCat} all="全部科目" options={cats.map((c) => [c, c])} />
+            <Filter value={appr} onChange={setAppr} all="全部狀態" options={L.approval} />
+            {canWrite && <button className="btn-primary" onClick={() => setAdding({})}><Plus className="w-4 h-4" />記一筆</button>}
+          </Toolbar>
+          {!rows.length ? <Empty>{all.length ? '沒有符合條件的收支' : `${month} 沒有收支紀錄`}</Empty> : (
             <div className="card p-0 overflow-x-auto"><table className="tbl">
               <thead><tr><th>日期</th><th>帳戶</th><th>科目</th><th>說明</th><th className="text-right">收入</th><th className="text-right">支出</th><th>狀態</th><th>經手</th><th /></tr></thead>
               <tbody>{rows.map((r) => (
@@ -68,6 +79,7 @@ function Entries({ month }: { month: string }) {
                       <button className="btn-primary btn-sm" onClick={() => act(() => api.post(`/ledger/${r.id}/approve`, { approve: true }), '已核准').then(reload)}><Check className="w-3.5 h-3.5" />核准</button>
                       <button className="btn-ghost btn-sm" onClick={() => act(() => api.post(`/ledger/${r.id}/approve`, { approve: false }), '已退回').then(reload)}><X className="w-3.5 h-3.5" />退回</button>
                     </>}
+                    {canWrite && !r.paymentId && <button className="btn-ghost btn-sm" onClick={() => setAdding(r)}>編輯</button>}
                     {canWrite && !r.paymentId && <button className="btn-ghost btn-sm text-gray-400" onClick={() => confirm('刪除這筆收支？') && act(() => api.delete(`/ledger/${r.id}`), '已刪除').then(reload)}><Trash2 className="w-3.5 h-3.5" /></button>}
                   </td>
                 </tr>
@@ -76,22 +88,29 @@ function Entries({ month }: { month: string }) {
           )}
         </>
       )}
-      {adding && data && <EntryForm categories={data.categories} onClose={() => setAdding(false)} onSaved={reload} />}
+      {adding && data && <EntryForm entry={adding} categories={data.categories} onClose={() => setAdding(null)} onSaved={reload} />}
     </>
   );
 }
 
-function EntryForm({ categories, onClose, onSaved }: { categories: { in: string[]; out: string[] }; onClose: () => void; onSaved: () => void }) {
+function EntryForm({ entry, categories, onClose, onSaved }: { entry: any; categories: { in: string[]; out: string[] }; onClose: () => void; onSaved: () => void }) {
   const { cid } = useAuth();
   const { data: vendors } = useLoad(() => api.get<any[]>('/vendors').then((r) => r.data), [cid]);
-  const [f, setF] = useState({ date: today(), fund: 'MGMT', direction: 'OUT', category: categories.out[0], amount: '', description: '', vendorId: '', voucherNo: '' });
+  const [f, setF] = useState(entry.id
+    ? { date: d10(entry.date), fund: entry.fund, direction: entry.direction, category: entry.category, amount: String(entry.amount), description: entry.description, vendorId: entry.vendorId ?? '', voucherNo: entry.voucherNo }
+    : { date: today(), fund: 'MGMT', direction: 'OUT', category: categories.out[0], amount: '', description: '', vendorId: '', voucherNo: '' });
   const cats = (f.direction === 'IN' ? categories.in : categories.out).filter((c) => c !== '管理費收入' && c !== '公共基金提撥');
   return (
-    <FormModal title="記一筆收支" onClose={onClose} onSubmit={async () => { await api.post('/ledger', { ...f, amount: Number(f.amount), vendorId: f.vendorId || null }); onSaved(); }}>
+    <FormModal title={entry.id ? '修改收支' : '記一筆收支'} onClose={onClose} onSubmit={async () => {
+      const body = { ...f, amount: Number(f.amount), vendorId: f.vendorId || null };
+      if (entry.id) { const r = await api.put(`/ledger/${entry.id}`, body); if (r.data.reapprove) toast('已修改，這筆支出需要重新核准'); }
+      else await api.post('/ledger', body);
+      onSaved();
+    }}>
       <Field label="收支"><select className="input" value={f.direction} onChange={(e) => setF({ ...f, direction: e.target.value, category: (e.target.value === 'IN' ? categories.in : categories.out).filter((c) => c !== '管理費收入' && c !== '公共基金提撥')[0] })}><option value="OUT">支出</option><option value="IN">收入</option></select></Field>
       <Field label="帳戶"><select className="input" value={f.fund} onChange={(e) => setF({ ...f, fund: e.target.value })}><option value="MGMT">管理費帳戶</option><option value="RESERVE">公共基金</option></select></Field>
       <Field label="日期"><input className="input" type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
-      <Field label="科目"><select className="input" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{cats.map((c) => <option key={c}>{c}</option>)}</select></Field>
+      <Field label="科目"><select className="input" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{[...new Set([...cats, f.category])].map((c) => <option key={c}>{c}</option>)}</select></Field>
       <Field label="金額"><input className="input" type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
       <Field label="廠商"><select className="input" value={f.vendorId} onChange={(e) => setF({ ...f, vendorId: e.target.value })}><option value="">—</option>{(vendors ?? []).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></Field>
       <Field label="說明" full><input className="input" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field>

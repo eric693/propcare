@@ -4,7 +4,7 @@ import { Plus } from 'lucide-react';
 import api from '../api/client';
 import { Page } from '../components/Layout';
 import HowTo from '../components/HowTo';
-import { ErrorBox, FormModal, Field, Loading, Stat, useLoad, toast } from '../components/ui';
+import { ErrorBox, FormModal, Field, Loading, matches, SearchBox, Stat, Toolbar, useLoad, toast } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { money } from '../lib/format';
 
@@ -15,6 +15,8 @@ export default function Overview() {
   const nav = useNavigate();
   const { data, error, reload } = useLoad(() => api.get<{ period: string; communities: Row[] }>('/overview').then((r) => r.data), []);
   const [adding, setAdding] = useState(false);
+  const [q, setQ] = useState('');
+  const [issue, setIssue] = useState('');
   const [form, setForm] = useState({ name: '', address: '', feeMode: 'AREA', feeRate: '60', reserveRatio: '10', dueDay: '15' });
   const rows = data?.communities ?? [];
   const sum = (k: keyof Row) => rows.reduce((s, r) => s + Number(r[k] ?? 0), 0);
@@ -32,11 +34,17 @@ export default function Overview() {
             <Stat label="欠費戶數" value={sum('arrearsUnits')} tone={sum('overTwo') ? 'bad' : undefined} sub={`逾二期 ${sum('overTwo')} 戶・${money(sum('arrearsAmount'))} 元`} />
             <Stat label="待處理" value={sum('openRepairs') + sum('pendingApprovals')} sub={`報修 ${sum('openRepairs')}・待核准支出 ${sum('pendingApprovals')}`} />
           </div>
+          <Toolbar count={`顯示 ${rows.filter((r) => matches(q, r.name)).length} / ${rows.length} 個社區`}>
+            <SearchBox value={q} onChange={setQ} placeholder="搜尋社區名稱" />
+            <select className="input w-auto" value={issue} onChange={(e) => setIssue(e.target.value)}>
+              <option value="">全部社區</option><option value="over2">有逾二期欠費</option><option value="low">收繳率低於 70%</option><option value="insp">30 天內有法定檢查</option><option value="pending">有待核准支出</option>
+            </select>
+          </Toolbar>
           <div className="card p-0 overflow-x-auto">
             <table className="tbl">
               <thead><tr><th>社區</th><th>戶數</th><th>本月收繳率</th><th>欠費</th><th>待領包裹</th><th>報修中</th><th>30 天內法定檢查</th><th>管理費帳戶</th><th>公共基金</th></tr></thead>
               <tbody>
-                {rows.map((r) => (
+                {rows.filter((r) => matches(q, r.name) && (!issue || (issue === 'over2' ? r.overTwo > 0 : issue === 'low' ? r.rate != null && r.rate < 70 : issue === 'insp' ? r.inspectionsDue > 0 : r.pendingApprovals > 0))).map((r) => (
                   <tr key={r.id}>
                     <td><button className="font-semibold text-brand hover:underline" onClick={() => go(r.id)}>{r.name}</button></td>
                     <td className="num">{r.units}</td>

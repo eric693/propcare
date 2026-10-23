@@ -165,6 +165,26 @@ export async function saveUser(req: AuthRequest, res: Response) {
   res.status(id ? 200 : 201).json({ id: user.id });
 }
 
+export async function deleteUser(req: AuthRequest, res: Response) {
+  const u = await prisma.user.findUnique({ where: { id: req.params.id } });
+  if (!u) throw new HttpError(404, '找不到帳號');
+  if (u.id === req.user!.id) throw new HttpError(400, '不能刪除自己的帳號');
+  if (u.role === 'ADMIN' && (await prisma.user.count({ where: { role: 'ADMIN', active: true } })) <= 1) throw new HttpError(400, '至少要保留一個物業公司管理員');
+  await prisma.user.delete({ where: { id: u.id } });
+  await audit(null, { type: 'staff', id: req.user!.id, name: req.user!.name }, '刪除帳號', u.username);
+  res.json({ ok: true });
+}
+
+/** 停用社區（不刪資料）：須輸入完整社區名稱確認 */
+export async function deactivateCommunity(req: AuthRequest, res: Response) {
+  const { confirmName } = parse(z.object({ confirmName: z.string() }), req.body);
+  const c = req.community!;
+  if (confirmName.trim() !== c.name) throw new HttpError(400, '社區名稱不符，未停用');
+  await prisma.community.update({ where: { id: c.id }, data: { active: false } });
+  await audit(c.id, { type: 'staff', id: req.user!.id, name: req.user!.name }, '停用社區', c.name);
+  res.json({ ok: true });
+}
+
 export async function auditLogs(req: AuthRequest, res: Response) {
   const logs = await prisma.auditLog.findMany({ where: { communityId: req.cid! }, orderBy: { createdAt: 'desc' }, take: 300 });
   res.json(logs);

@@ -61,6 +61,30 @@ export async function pickupPackage(req: AuthRequest, res: Response) {
   res.json({ ok: true, package: p });
 }
 
+export async function updatePackage(req: AuthRequest, res: Response) {
+  const b = parse(z.object({
+    unitId: z.string().min(1, '請選擇戶別'), recipient: z.string().trim().max(50).default(''),
+    carrier: z.string().trim().max(30).default(''), trackingNo: z.string().trim().max(50).default(''),
+    kind: z.enum(['PARCEL', 'MAIL', 'REGISTERED', 'COLD', 'LARGE']).default('PARCEL'),
+    shelf: z.string().trim().max(20).default(''), note: z.string().trim().max(200).default(''),
+  }), req.body);
+  const p = await prisma.package.findFirst({ where: { id: req.params.id, communityId: req.cid! } });
+  if (!p) throw new HttpError(404, '找不到包裹');
+  if (!(await prisma.unit.findFirst({ where: { id: b.unitId, communityId: req.cid!, active: true } }))) throw new HttpError(404, '找不到戶別');
+  await prisma.package.update({ where: { id: p.id }, data: b });
+  res.json({ ok: true });
+}
+
+/** 刪除包裹登記（登記錯誤時用；已領取的保留紀錄不能刪） */
+export async function deletePackage(req: AuthRequest, res: Response) {
+  const p = await prisma.package.findFirst({ where: { id: req.params.id, communityId: req.cid! }, include: { unit: { select: { label: true } } } });
+  if (!p) throw new HttpError(404, '找不到包裹');
+  if (p.status === 'PICKED') throw new HttpError(400, '已領取的包裹保留紀錄，不能刪除');
+  await prisma.package.delete({ where: { id: p.id } });
+  await audit(req.cid, actor(req), '刪除包裹登記', `${p.unit.label} ${p.pickupCode}`);
+  res.json({ ok: true });
+}
+
 export async function returnPackage(req: AuthRequest, res: Response) {
   const p = await prisma.package.findFirst({ where: { id: req.params.id, communityId: req.cid!, status: 'WAITING' } });
   if (!p) throw new HttpError(404, '找不到待領包裹');
@@ -97,6 +121,19 @@ export async function saveFacility(req: AuthRequest, res: Response) {
   res.status(id ? 200 : 201).json({ ok: true });
 }
 
+/** 刪除設施：有預約紀錄的設施改為停用，保留歷史 */
+export async function deleteFacility(req: AuthRequest, res: Response) {
+  const f = await prisma.facility.findFirst({ where: { id: req.params.id, communityId: req.cid! }, include: { _count: { select: { bookings: true } } } });
+  if (!f) throw new HttpError(404, '找不到設施');
+  if (f._count.bookings) {
+    await prisma.facility.update({ where: { id: f.id }, data: { active: false } });
+    await prisma.booking.updateMany({ where: { facilityId: f.id, status: 'BOOKED', date: { gte: toDate(todayStr()) } }, data: { status: 'CANCELLED', note: '設施停用' } });
+    res.json({ ok: true, deactivated: true }); return;
+  }
+  await prisma.facility.delete({ where: { id: f.id } });
+  res.json({ ok: true, deactivated: false });
+}
+
 export async function facilitySlots(req: AuthRequest, res: Response) {
   const f = await prisma.facility.findFirst({ where: { id: req.params.id, communityId: req.cid! } });
   if (!f) throw new HttpError(404, '找不到設施');
@@ -117,6 +154,23 @@ export async function staffBooking(req: AuthRequest, res: Response) {
   const b = parse(z.object({ facilityId: z.string(), unitId: z.string(), date: zDate, startTime: zTime, people: z.coerce.number().int().min(1).default(1), note: z.string().trim().max(200).default('') }), req.body);
   if (!(await prisma.unit.findFirst({ where: { id: b.unitId, communityId: req.cid! } }))) throw new HttpError(404, '找不到戶別');
   res.status(201).json(await createBooking({ ...b, communityId: req.cid!, by: req.user!.name }));
+}
+
+/** 改期：取消原預約、依同樣規則重新預約；新時段不行就還原 */
+export async function updateBooking(req: AuthRequest, res: Response) {
+  const b = parse(z.object({ facilityId: z.string(), unitId: z.string(), date: zDate, startTime: zTime, people: z.coerce.number().int().min(1).default(1), note: z.string().trim().max(200).default('') }), req.body);
+  const old = await prisma.booking.findFirst({ where: { id: req.params.id, communityId: req.cid!, status: 'BOOKED' } });
+  if (!old) throw new HttpError(404, '找不到預約');
+  if (!(await prisma.unit.findFirst({ where: { id: b.unitId, communityId: req.cid! } }))) throw new HttpError(404, '找不到戶別');
+  await prisma.booking.update({ where: { id: old.id }, data: { status: 'CANCELLED' } });
+  try {
+    const nb = await createBooking({ ...b, communityId: req.cid!, residentId: old.unitId === b.unitId ? old.residentId ?? undefined : undefined, by: req.user!.name });
+    await prisma.booking.update({ where: { id: old.id }, data: { note: `${old.note}${old.note ? '；' : ''}已改期` } });
+    res.json(nb);
+  } catch (e) {
+    await prisma.booking.update({ where: { id: old.id }, data: { status: 'BOOKED' } });
+    throw e;
+  }
 }
 
 export async function cancelBooking(req: AuthRequest, res: Response) {
@@ -161,13 +215,20 @@ export async function updateRepair(req: AuthRequest, res: Response) {
     status: z.enum(['NEW', 'ASSIGNED', 'WORKING', 'DONE', 'CLOSED', 'REJECTED']).optional(),
     vendorId: z.string().nullable().optional(), assignee: z.string().trim().max(50).optional(),
     cost: z.coerce.number().int().min(0).optional(), priority: z.enum(['URGENT', 'HIGH', 'NORMAL', 'LOW']).optional(),
+    unitId: z.string().nullable().optional(), area: z.enum(['PUBLIC', 'PRIVATE']).optional(),
+    location: z.string().trim().max(100).optional(), category: z.string().trim().max(20).optional(),
+    title: z.string().trim().min(1, '請填寫報修項目').max(100).optional(), description: z.string().trim().max(2000).optional(),
     log: z.string().trim().max(1000).optional(), logPublic: z.boolean().default(true),
   }), req.body);
   const r = await prisma.repair.findFirst({ where: { id: req.params.id, communityId: req.cid! } });
   if (!r) throw new HttpError(404, '找不到報修單');
   const { log, logPublic, ...rest } = b;
   const done = b.status === 'DONE' && r.status !== 'DONE';
-  await prisma.repair.update({ where: { id: r.id }, data: { ...rest, vendorId: b.vendorId === undefined ? undefined : b.vendorId || null, ...(done ? { doneAt: new Date() } : {}) } });
+  if (b.unitId && !(await prisma.unit.findFirst({ where: { id: b.unitId, communityId: req.cid! } }))) throw new HttpError(404, '找不到戶別');
+  await prisma.repair.update({ where: { id: r.id }, data: {
+    ...rest, vendorId: b.vendorId === undefined ? undefined : b.vendorId || null,
+    unitId: b.unitId === undefined ? undefined : b.unitId || null, ...(done ? { doneAt: new Date() } : {}),
+  } });
   const texts = [];
   if (b.status && b.status !== r.status) texts.push(`狀態：${REPAIR_STATUS[b.status]}`);
   if (log) texts.push(log);
@@ -175,6 +236,15 @@ export async function updateRepair(req: AuthRequest, res: Response) {
   if (r.unitId && b.status && b.status !== r.status && logPublic) {
     await notifyUnit(r.unitId, `【${req.community!.name}】您的報修「${r.title}」（${r.repairNo}）${REPAIR_STATUS[b.status]}${log ? `\n${log}` : ''}`);
   }
+  res.json({ ok: true });
+}
+
+export async function deleteRepair(req: AuthRequest, res: Response) {
+  const r = await prisma.repair.findFirst({ where: { id: req.params.id, communityId: req.cid! } });
+  if (!r) throw new HttpError(404, '找不到報修單');
+  if (r.cost > 0 && req.user!.role !== 'ADMIN') throw new HttpError(403, '有費用紀錄的報修單只有物業公司管理員能刪除');
+  await prisma.repair.delete({ where: { id: r.id } });
+  await audit(req.cid, actor(req), '刪除報修', `${r.repairNo} ${r.title}`);
   res.json({ ok: true });
 }
 

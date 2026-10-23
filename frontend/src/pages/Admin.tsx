@@ -3,7 +3,8 @@ import { Plus } from 'lucide-react';
 import api from '../api/client';
 import { Page } from '../components/Layout';
 import HowTo from '../components/HowTo';
-import { ErrorBox, Field, FormModal, Loading, toast, useLoad } from '../components/ui';
+import { act, ErrorBox, Field, Filter, FormModal, Loading, matches, SearchBox, toast, Toolbar, useLoad } from '../components/ui';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { L } from '../lib/format';
 import { Community } from '../types';
@@ -17,6 +18,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 /** 社區設定：物業公司管理員可編輯；其他人唯讀 */
 export function CommunitySettings() {
   const { cid, user, refresh } = useAuth();
+  const nav = useNavigate();
   const isAdmin = user?.role === 'ADMIN';
   const { data, error } = useLoad(() => api.get<Community>('/community').then((r) => r.data), [cid]);
   const [f, setF] = useState<any>(null);
@@ -69,6 +71,17 @@ export function CommunitySettings() {
         <Field label="包裹幾天未領算逾期">{inp('packageOverdueDays', 'number')}</Field>
         <Field label="備註" full>{inp('note')}</Field>
       </Section>
+      {isAdmin && (
+        <div className="card border-red-200">
+          <h3 className="font-semibold text-red-700 mb-1">停用社區</h3>
+          <p className="text-sm text-gray-500 mb-3">解約或不再管理時使用。停用後所有人都看不到這個社區，住戶也無法登入；資料保留在資料庫，需要時可請系統管理員恢復。</p>
+          <button className="btn-danger" onClick={async () => {
+            const name = prompt(`請輸入完整社區名稱「${f.name}」確認停用：`);
+            if (name == null) return;
+            if (await act(() => api.post('/community/deactivate', { confirmName: name }), '社區已停用')) { await refresh(); nav('/overview'); }
+          }}>停用這個社區</button>
+        </div>
+      )}
     </Page>
   );
 }
@@ -78,22 +91,34 @@ export function Accounts() {
   const { data: users, error, reload } = useLoad(() => api.get<any[]>('/users').then((r) => r.data), []);
   const { data: communities } = useLoad(() => api.get<Community[]>('/communities').then((r) => r.data), []);
   const [edit, setEdit] = useState<any>(null);
+  const [q, setQ] = useState('');
+  const [role, setRole] = useState('');
+  const [comm, setComm] = useState('');
+  const [state, setState] = useState('');
   if (user?.role !== 'ADMIN') return <Page title="帳號權限"><div className="card text-sm text-gray-500">需要物業公司管理員權限。</div></Page>;
   const cname = (id: string) => communities?.find((c) => c.id === id)?.name ?? '';
   return (
     <Page title="帳號權限" actions={<button className="btn-primary" onClick={() => setEdit({ role: 'MANAGER', active: true, communityIds: [] })}><Plus className="w-4 h-4" />新增帳號</button>}>
       <HowTo module="accounts" />
       <ErrorBox error={error} />
+      <Toolbar count={users && `共 ${users.length} 個帳號`}>
+        <SearchBox value={q} onChange={setQ} placeholder="搜尋姓名、帳號、職稱、電話" />
+        <Filter value={role} onChange={setRole} all="全部身分" options={L.role} />
+        <Filter value={comm} onChange={setComm} all="全部社區" options={(communities ?? []).map((c) => [c.id, c.name])} />
+        <Filter value={state} onChange={setState} all="啟用與停用" options={[['on', '啟用中'], ['off', '已停用']]} />
+      </Toolbar>
       {!users ? <Loading /> : (
         <div className="card p-0 overflow-x-auto"><table className="tbl">
           <thead><tr><th>姓名</th><th>帳號</th><th>身分</th><th>負責社區</th><th>LINE</th><th>狀態</th><th /></tr></thead>
-          <tbody>{users.map((u) => (
+          <tbody>{users.filter((u) => (!role || u.role === role) && (!comm || u.role === 'ADMIN' || u.communityIds.includes(comm))
+            && (!state || (state === 'on' ? u.active : !u.active)) && matches(q, u.name, u.username, u.title, u.phone)).map((u) => (
             <tr key={u.id} className={u.active ? '' : 'opacity-50'}>
               <td><b>{u.name}</b><div className="text-xs text-gray-400">{u.title}</div></td><td className="font-mono text-xs">{u.username}</td>
               <td><span className={u.role === 'ADMIN' ? 'badge-info' : u.role === 'COMMITTEE' ? 'badge-warn' : 'badge-mute'}>{L.role[u.role]}</span></td>
               <td className="text-xs max-w-xs whitespace-normal">{u.role === 'ADMIN' ? '全部社區' : u.communityIds.map(cname).join('、') || <span className="text-red-500">未指派</span>}</td>
               <td>{u.lineBound ? <span className="badge-ok">已綁定</span> : '-'}</td><td>{u.active ? '啟用' : '停用'}</td>
-              <td className="text-right"><button className="btn-ghost btn-sm" onClick={() => setEdit(u)}>編輯</button></td>
+              <td className="text-right whitespace-nowrap"><button className="btn-ghost btn-sm" onClick={() => setEdit(u)}>編輯</button>
+                {u.id !== user.id && <button className="btn-ghost btn-sm text-red-500" onClick={() => confirm(`刪除帳號 ${u.name}（${u.username}）？要暫時停權請改用「編輯」取消啟用。`) && act(() => api.delete(`/users/${u.id}`), '已刪除').then(reload)}>刪除</button>}</td>
             </tr>
           ))}</tbody>
         </table></div>

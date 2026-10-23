@@ -2,7 +2,7 @@ import { createContext, FormEvent, ReactNode, useContext, useEffect, useState } 
 import { Link, Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { Bell, CalendarDays, ChevronRight, Home, LogOut, Megaphone, Package, Receipt, User, Wrench } from 'lucide-react';
 import api, { errMsg, rapi, RESIDENT_TOKEN } from '../../api/client';
-import { Empty, ErrorBox, Field, FormModal, Loading, Tabs, toast, useLoad } from '../../components/ui';
+import { Empty, ErrorBox, Field, Filter, FormModal, Loading, matches, SearchBox, Tabs, toast, useLoad } from '../../components/ui';
 import { addDays, d10, dt, L, money, thisMonth, addMonth, today, pct } from '../../lib/format';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -173,13 +173,16 @@ export function RHome() {
 export function RBills() {
   const { me } = useMe();
   const { data, error } = useLoad(() => rapi.get<any[]>('/resident/bills').then((r) => r.data), []);
+  const [st, setSt] = useState<'all' | 'owe' | 'paid'>('all');
   if (error) return <ErrorBox error={error} />;
   if (!data) return <Loading />;
+  const list = data.filter((b) => st === 'all' || (st === 'paid' ? b.status === 'PAID' : b.status !== 'PAID'));
   return (
     <>
       <h2 className="font-bold mb-3">管理費帳單</h2>
+      <Tabs value={st} onChange={setSt} items={[['all', '全部', data.length], ['owe', '未繳清', data.filter((b) => b.status !== 'PAID').length], ['paid', '已繳清']]} />
       {me?.community.bankInfo && <div className="card text-xs text-gray-600 mb-3">繳費帳戶：{me.community.bankInfo}<br />繳費後若有疑問，請洽管理中心 {me.community.phone}</div>}
-      {!data.length ? <Empty>還沒有帳單</Empty> : data.map((b) => (
+      {!list.length ? <Empty>{data.length ? '沒有符合的帳單' : '還沒有帳單'}</Empty> : list.map((b) => (
         <div key={b.id} className="card mb-2">
           <div className="flex items-center"><b>{b.period}</b><span className={`${L.billCls[b.status]} ml-2`}>{L.bill[b.status]}</span><span className="ml-auto font-bold num">{money(b.total)} 元</span></div>
           <div className="text-xs text-gray-500 mt-1">管理費 {money(b.amountMgmt)}{b.amountParking ? `・車位 ${money(b.amountParking)}` : ''}{b.amountOther ? `・${b.otherNote || '其他'} ${money(b.amountOther)}` : ''}・期限 {d10(b.dueDate)}</div>
@@ -238,23 +241,36 @@ export function RBooking() {
 
 const CATS = ['水電', '電梯', '門禁對講', '消防', '照明', '漏水', '公設損壞', '清潔環境', '停車場', '其他'];
 export function RRepairs() {
+  const { me } = useMe();
   const { data, error, reload } = useLoad(() => rapi.get<any[]>('/resident/repairs').then((r) => r.data), []);
-  const [adding, setAdding] = useState(false);
-  const [f, setF] = useState({ area: 'PUBLIC', category: '水電', location: '', title: '', description: '' });
+  const [adding, setAdding] = useState<any>(null);
+  const empty = { area: 'PUBLIC', category: '水電', location: '', title: '', description: '' };
+  const [f, setF] = useState(empty);
+  const [q, setQ] = useState('');
+  const [st, setSt] = useState('');
+  const list = (data ?? []).filter((r) => (!st || (st === 'open' ? ['NEW', 'ASSIGNED', 'WORKING'].includes(r.status) : !['NEW', 'ASSIGNED', 'WORKING'].includes(r.status))) && matches(q, r.title, r.description, r.location, r.repairNo));
+  const open = (r: any) => { setF(r.id ? { area: r.area, category: r.category, location: r.location, title: r.title, description: r.description } : empty); setAdding(r); };
   return (
     <>
-      <div className="flex items-center mb-3"><h2 className="font-bold">報修</h2><button className="btn-primary btn-sm ml-auto" onClick={() => setAdding(true)}>我要報修</button></div>
+      <div className="flex items-center mb-3"><h2 className="font-bold">報修</h2><button className="btn-primary btn-sm ml-auto" onClick={() => open({})}>我要報修</button></div>
+      {(data?.length ?? 0) > 3 && <div className="flex gap-2 mb-3"><SearchBox value={q} onChange={setQ} placeholder="搜尋報修" /><Filter value={st} onChange={setSt} all="全部" options={[['open', '處理中'], ['done', '已完成']]} /></div>}
       <ErrorBox error={error} />
-      {!data ? <Loading /> : !data.length ? <Empty>沒有報修紀錄</Empty> : data.map((r) => (
+      {!data ? <Loading /> : !list.length ? <Empty>{data.length ? '沒有符合的報修' : '沒有報修紀錄'}</Empty> : list.map((r) => (
         <div key={r.id} className="card mb-2">
           <div className="flex items-center gap-2"><b className="flex-1 text-sm">{r.title}</b><span className={L.repairCls[r.status]}>{L.repair[r.status]}</span></div>
           <div className="text-xs text-gray-400">{r.repairNo}・{dt(r.createdAt)}・{L.area[r.area]} {r.location}</div>
           <ol className="mt-2 border-l-2 border-gray-100 pl-3 space-y-1">{r.logs.map((l: any) => <li key={l.id} className="text-xs text-gray-600"><span className="text-gray-400">{dt(l.createdAt)}</span>　{l.text}</li>)}</ol>
+          {r.status === 'NEW' && r.residentId === me?.id && <div className="flex gap-1 mt-2">
+            <button className="btn-ghost btn-sm" onClick={() => open(r)}>修改</button>
+            <button className="btn-ghost btn-sm text-red-500" onClick={async () => { if (confirm('撤回這筆報修？')) { try { await rapi.delete(`/resident/repairs/${r.id}`); toast('已撤回'); reload(); } catch (e) { toast(errMsg(e), true); } } }}>撤回</button>
+          </div>}
         </div>
       ))}
       {adding && (
-        <FormModal title="我要報修" submitText="送出" onClose={() => setAdding(false)} onSubmit={async () => {
-          await rapi.post('/resident/repairs', f); toast('已送出，管理中心處理後會更新進度'); setF({ ...f, title: '', description: '', location: '' }); reload();
+        <FormModal title={adding.id ? '修改報修' : '我要報修'} submitText={adding.id ? '儲存' : '送出'} onClose={() => setAdding(null)} onSubmit={async () => {
+          if (adding.id) { await rapi.put(`/resident/repairs/${adding.id}`, f); toast('已修改'); }
+          else { await rapi.post('/resident/repairs', f); toast('已送出，管理中心處理後會更新進度'); }
+          setF(empty); reload();
         }}>
           <Field label="區域"><select className="input" value={f.area} onChange={(e) => setF({ ...f, area: e.target.value })}><option value="PUBLIC">公共區域</option><option value="PRIVATE">我家室內</option></select></Field>
           <Field label="類別"><select className="input" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{CATS.map((c) => <option key={c}>{c}</option>)}</select></Field>
@@ -280,10 +296,17 @@ export function RNews() {
 function RAnnouncements() {
   const { data, error, reload } = useLoad(() => rapi.get<any[]>('/resident/announcements').then((r) => r.data), []);
   const [open, setOpen] = useState<string | null>(null);
+  const [q, setQ] = useState('');
+  const [cat, setCat] = useState('');
   if (error) return <ErrorBox error={error} />;
   if (!data) return <Loading />;
   if (!data.length) return <Empty>沒有公告</Empty>;
-  return <>{data.map((a) => (
+  const cats = [...new Set(data.map((a) => a.category))];
+  const list = data.filter((a) => (!cat || a.category === cat) && matches(q, a.title, a.body));
+  return <>
+    <div className="flex gap-2 mb-3"><SearchBox value={q} onChange={setQ} placeholder="搜尋公告" /><Filter value={cat} onChange={setCat} all="全部類別" options={cats.map((c) => [c, c])} /></div>
+    {!list.length && <Empty>沒有符合的公告</Empty>}
+    {list.map((a) => (
     <button key={a.id} className="card mb-2 w-full text-left" onClick={async () => { setOpen(open === a.id ? null : a.id); if (!a.read) { await rapi.post(`/resident/announcements/${a.id}/read`).catch(() => {}); reload(); } }}>
       <div className="flex items-center gap-1.5 text-xs">{!a.read && <span className="w-2 h-2 rounded-full bg-red-500" />}{a.pinned && <span className="badge-info">置頂</span>}<span className={a.category === '緊急' ? 'badge-bad' : 'badge-mute'}>{a.category}</span><span className="text-gray-400 ml-auto">{d10(a.publishDate)}</span></div>
       <div className="font-semibold mt-1">{a.title}</div>

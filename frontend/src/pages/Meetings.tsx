@@ -4,7 +4,7 @@ import { AlertTriangle, ArrowLeft, CheckCircle2, Plus, Printer, XCircle } from '
 import api from '../api/client';
 import { Page } from '../components/Layout';
 import HowTo from '../components/HowTo';
-import { act, Empty, ErrorBox, Field, FormModal, Loading, Tabs, useLoad } from '../components/ui';
+import { act, Empty, ErrorBox, Field, Filter, FormModal, Loading, matches, SearchBox, Tabs, Toolbar, useLoad } from '../components/ui';
 import { useAuth, useCanWrite } from '../context/AuthContext';
 import { L, pct, today } from '../lib/format';
 
@@ -15,18 +15,31 @@ export default function Meetings() {
   const nav = useNavigate();
   const { data, error, reload } = useLoad(() => api.get<any[]>('/meetings').then((r) => r.data), [cid]);
   const [edit, setEdit] = useState<any>(null);
+  const [q, setQ] = useState('');
+  const [kind, setKind] = useState('');
+  const [status, setStatus] = useState('');
+  const list = (data ?? []).filter((m) => (!kind || m.kind === kind) && (!status || m.status === status) && matches(q, m.title, m.location, m.agenda, m.minutes));
   return (
     <Page title="會議與表決" actions={canWrite && <button className="btn-primary" onClick={() => setEdit({})}><Plus className="w-4 h-4" />新增會議</button>}>
       <HowTo module="meetings" />
+      <Toolbar count={data && `顯示 ${list.length} / ${data.length} 場`}>
+        <SearchBox value={q} onChange={setQ} placeholder="搜尋會議名稱、地點、議程、紀錄" />
+        <Filter value={kind} onChange={setKind} all="全部會議" options={L.meetingKind} />
+        <Filter value={status} onChange={setStatus} all="全部狀態" options={L.meetingStatus} />
+      </Toolbar>
       <ErrorBox error={error} />
-      {!data ? <Loading /> : !data.length ? <Empty>還沒有會議</Empty> : (
-        <div className="space-y-3">{data.map((m) => (
+      {!data ? <Loading /> : !list.length ? <Empty>{data.length ? '沒有符合條件的會議' : '還沒有會議'}</Empty> : (
+        <div className="space-y-3">{list.map((m) => (
           <div key={m.id} className="card cursor-pointer hover:border-brand/40" onClick={() => nav(`/meetings/${m.id}`)}>
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className={m.kind === 'OWNERS' ? 'badge-info' : 'badge-mute'}>{L.meetingKind[m.kind]}</span>
               {m.reconvene && <span className="badge-warn">重新召集</span>}
               <span className={m.status === 'HELD' ? 'badge-ok' : m.status === 'CANCELLED' ? 'badge-mute' : 'badge-warn'}>{L.meetingStatus[m.status]}</span>
               {!m.notice.ok && m.status === 'PLANNED' && <span className="badge-bad"><AlertTriangle className="w-3 h-3 mr-0.5" />通知期限</span>}
+              {canWrite && <span className="ml-auto flex gap-1" onClick={(e) => e.stopPropagation()}>
+                <button className="btn-ghost btn-sm" onClick={() => setEdit(m)}>編輯</button>
+                {m.status !== 'HELD' && <button className="btn-ghost btn-sm text-red-500" onClick={() => confirm(`刪除「${m.title}」？簽到與表決紀錄會一併刪除。`) && act(() => api.delete(`/meetings/${m.id}`), '已刪除').then(reload)}>刪除</button>}
+              </span>}
             </div>
             <div className="font-semibold mt-1.5">{m.title}</div>
             <div className="text-sm text-gray-500">{m.meetingDate} {m.meetingTime}・{m.location}・簽到 {m._count.attendance} 戶・議案 {m._count.motions} 案</div>
@@ -70,6 +83,7 @@ function MeetingForm({ m, onClose, onSaved }: { m: any; onClose: () => void; onS
 
 export function MeetingDetail() {
   const { id } = useParams();
+  const nav = useNavigate();
   const { cid } = useAuth();
   const canWrite = useCanWrite();
   const { data: d, error, setData, reload } = useLoad(() => api.get<any>(`/meetings/${id}`).then((r) => r.data), [cid, id]);
@@ -102,6 +116,7 @@ export function MeetingDetail() {
     <Page title={m.title} actions={<>
       <Link to="/meetings" className="btn-ghost"><ArrowLeft className="w-4 h-4" />會議列表</Link>
       {canWrite && <button className="btn-secondary" onClick={() => setEditMeeting(true)}>編輯會議</button>}
+      {canWrite && m.status !== 'HELD' && <button className="btn-danger" onClick={async () => { if (confirm(`刪除「${m.title}」？`) && await act(() => api.delete(`/meetings/${m.id}`), '已刪除')) nav('/meetings'); }}>刪除</button>}
     </>}>
       <div className="text-sm text-gray-500 mb-3 -mt-2">{L.meetingKind[m.kind]}{m.reconvene ? '（重新召集）' : ''}・{m.meetingDate} {m.meetingTime}・{m.location}</div>
       {!d.notice.ok && <div className="card border-red-200 bg-red-50 text-sm text-red-700 mb-3 flex gap-2"><AlertTriangle className="w-4 h-4 mt-0.5" />{d.notice.message}</div>}

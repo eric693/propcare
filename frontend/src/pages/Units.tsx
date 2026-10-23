@@ -3,7 +3,7 @@ import { ChevronDown, KeyRound, Pencil, Plus, Trash2, Upload, UserPlus } from 'l
 import api from '../api/client';
 import { Page } from '../components/Layout';
 import HowTo from '../components/HowTo';
-import { act, Empty, ErrorBox, Field, FormModal, Loading, Tabs, useLoad } from '../components/ui';
+import { act, Empty, ErrorBox, Field, Filter, FormModal, Loading, matches, SearchBox, Tabs, Toolbar, useLoad } from '../components/ui';
 import { useAuth, useCanWrite } from '../context/AuthContext';
 import { L, money } from '../lib/format';
 import { Resident, Unit } from '../types';
@@ -16,14 +16,17 @@ export default function Units() {
   const { data: units, error, reload } = useLoad(() => api.get<Unit[]>('/units').then((r) => r.data), [cid]);
   const [q, setQ] = useState('');
   const [building, setBuilding] = useState('');
+  const [occ, setOcc] = useState('');
+  const [owe, setOwe] = useState('');
   const [open, setOpen] = useState<string | null>(null);
   const [editUnit, setEditUnit] = useState<Partial<Unit> | null>(null);
   const [editRes, setEditRes] = useState<(Partial<Resident> & { unitId: string }) | null>(null);
   const [importing, setImporting] = useState(false);
 
   const buildings = useMemo(() => [...new Set((units ?? []).map((u) => u.building).filter(Boolean))].sort(), [units]);
-  const shown = (units ?? []).filter((u) => (!building || u.building === building)
-    && (!q || [u.label, u.ownerName, ...u.residents.flatMap((r) => [r.name, r.phone])].some((s) => s?.includes(q))));
+  const shown = (units ?? []).filter((u) => (!building || u.building === building) && (!occ || u.occupancy === occ)
+    && (!owe || (owe === 'owe' ? u.owed.count > 0 : owe === 'over2' ? u.owed.count > 2 : owe === 'nores' ? !u.residents.length : true))
+    && matches(q, u.label, u.ownerName, u.note, ...u.residents.flatMap((r) => [r.name, r.phone, r.email])));
   const totalShare = (units ?? []).reduce((s, u) => s + u.share, 0);
 
   return (
@@ -36,13 +39,15 @@ export default function Units() {
       <ErrorBox error={error} />
       {tab === 'parking' ? <Parking units={units ?? []} /> : !units ? <Loading /> : (
         <>
-          <div className="flex flex-wrap gap-2 mb-3">
-            <input className="input max-w-xs" placeholder="搜尋戶別、姓名、電話" value={q} onChange={(e) => setQ(e.target.value)} />
-            {buildings.length > 1 && <select className="input w-auto" value={building} onChange={(e) => setBuilding(e.target.value)}><option value="">全部棟別</option>{buildings.map((b) => <option key={b} value={b}>{b} 棟</option>)}</select>}
-            <div className="text-xs text-gray-400 self-center ml-auto">共 {units.length} 戶・住戶 {units.reduce((s, u) => s + u.residents.length, 0)} 人・比例合計 {Math.round(totalShare * 100) / 100}</div>
-          </div>
+          <Toolbar count={`顯示 ${shown.length} / ${units.length} 戶・住戶 ${units.reduce((s, u) => s + u.residents.length, 0)} 人・比例合計 ${Math.round(totalShare * 100) / 100}`}>
+            <SearchBox value={q} onChange={setQ} placeholder="搜尋戶別、所有權人、住戶姓名、電話" />
+            {buildings.length > 1 && <Filter value={building} onChange={setBuilding} all="全部棟別" options={buildings.map((b) => [b, `${b} 棟`])} />}
+            <Filter value={occ} onChange={setOcc} all="全部使用狀態" options={L.occupancy} />
+            <Filter value={owe} onChange={setOwe} all="全部帳務" options={[['owe', '有欠費'], ['over2', '欠費逾二期'], ['nores', '沒有住戶資料']]} />
+          </Toolbar>
           {!units.length ? <Empty>還沒有戶別。請按「批次匯入」從 Excel 貼上，或逐戶新增。</Empty> : (
             <div className="card p-0 divide-y divide-gray-50">
+              {!shown.length && <div className="text-center py-8 text-sm text-gray-400">沒有符合條件的戶別</div>}
               {shown.map((u) => (
                 <div key={u.id}>
                   <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50" onClick={() => setOpen(open === u.id ? null : u.id)}>
@@ -155,16 +160,28 @@ function Parking({ units }: { units: Unit[] }) {
   const canWrite = useCanWrite();
   const { data, error, reload } = useLoad(() => api.get<any[]>('/parking').then((r) => r.data), [cid]);
   const [edit, setEdit] = useState<any>(null);
+  const [q, setQ] = useState('');
+  const [kind, setKind] = useState('');
+  const [use, setUse] = useState('');
+  const shown = (data ?? []).filter((p) => (!kind || p.kind === kind) && (!use || (use === 'used' ? p.unitId : !p.unitId)) && matches(q, p.code, p.unit?.label, p.note));
   return (
     <>
       <ErrorBox error={error} />
-      {canWrite && <button className="btn-primary mb-3" onClick={() => setEdit({ code: '', kind: 'CAR', unitId: '', monthlyFee: 500 })}><Plus className="w-4 h-4" />新增車位</button>}
-      {!data ? <Loading /> : !data.length ? <Empty>尚未登記車位</Empty> : (
+      <Toolbar count={data && `顯示 ${shown.length} / ${data.length} 個車位`}>
+        <SearchBox value={q} onChange={setQ} placeholder="搜尋車位編號、戶別、備註" />
+        <Filter value={kind} onChange={setKind} all="汽機車" options={[['CAR', '汽車'], ['MOTO', '機車']]} />
+        <Filter value={use} onChange={setUse} all="全部車位" options={[['used', '已使用'], ['free', '空位']]} />
+        {canWrite && <button className="btn-primary" onClick={() => setEdit({ code: '', kind: 'CAR', unitId: '', monthlyFee: 500 })}><Plus className="w-4 h-4" />新增車位</button>}
+      </Toolbar>
+      {!data ? <Loading /> : !shown.length ? <Empty>{data.length ? '沒有符合條件的車位' : '尚未登記車位'}</Empty> : (
         <div className="card p-0 overflow-x-auto"><table className="tbl">
           <thead><tr><th>車位</th><th>類型</th><th>使用戶別</th><th>月清潔費</th><th>備註</th><th /></tr></thead>
-          <tbody>{data.map((p) => (
+          <tbody>{shown.map((p) => (
             <tr key={p.id}><td className="font-semibold">{p.code}</td><td>{p.kind === 'CAR' ? '汽車' : '機車'}</td><td>{p.unit?.label ?? <span className="text-gray-300">空位</span>}</td><td className="num">{money(p.monthlyFee)}</td><td className="text-gray-500">{p.note}</td>
-              <td className="text-right">{canWrite && <button className="btn-ghost btn-sm" onClick={() => setEdit({ ...p, unitId: p.unitId ?? '' })}>編輯</button>}</td></tr>
+              <td className="text-right whitespace-nowrap">{canWrite && <>
+                <button className="btn-ghost btn-sm" onClick={() => setEdit({ ...p, unitId: p.unitId ?? '' })}>編輯</button>
+                <button className="btn-ghost btn-sm text-red-500" onClick={() => confirm(`刪除車位 ${p.code}？`) && act(() => api.delete(`/parking/${p.id}`), '已刪除').then(reload)}><Trash2 className="w-3.5 h-3.5" /></button>
+              </>}</td></tr>
           ))}</tbody>
         </table></div>
       )}

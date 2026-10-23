@@ -3,7 +3,7 @@ import { Pin, Plus } from 'lucide-react';
 import api from '../api/client';
 import { Page } from '../components/Layout';
 import HowTo from '../components/HowTo';
-import { act, Empty, ErrorBox, Field, FormModal, Loading, toast, useLoad } from '../components/ui';
+import { act, Empty, ErrorBox, Field, Filter, FormModal, Loading, matches, SearchBox, toast, Toolbar, useLoad } from '../components/ui';
 import { useAuth, useCanWrite } from '../context/AuthContext';
 import { d10, today } from '../lib/format';
 
@@ -15,12 +15,22 @@ export default function Announcements() {
   const canWrite = useCanWrite();
   const { data, error, reload } = useLoad(() => api.get<any>('/announcements').then((r) => r.data), [cid]);
   const [edit, setEdit] = useState<any>(null);
+  const [q, setQ] = useState('');
+  const [cat, setCat] = useState('');
+  const [state, setState] = useState('');
+  const stateOf = (a: any) => (a.expireDate && d10(a.expireDate) < today() ? 'expired' : d10(a.publishDate) > today() ? 'scheduled' : 'live');
+  const list = (data?.list ?? []).filter((a: any) => (!cat || a.category === cat) && (!state || (state === 'pinned' ? a.pinned : stateOf(a) === state)) && matches(q, a.title, a.body, a.createdBy));
   return (
     <Page title="公告" actions={canWrite && <button className="btn-primary" onClick={() => setEdit({})}><Plus className="w-4 h-4" />發布公告</button>}>
       <HowTo module="announcements" />
+      <Toolbar count={data && `顯示 ${list.length} / ${data.list.length} 則`}>
+        <SearchBox value={q} onChange={setQ} placeholder="搜尋標題、內容" />
+        <Filter value={cat} onChange={setCat} all="全部類別" options={CATS.map((c) => [c, c])} />
+        <Filter value={state} onChange={setState} all="全部狀態" options={[['live', '公告中'], ['scheduled', '預約發布'], ['expired', '已下架'], ['pinned', '置頂']]} />
+      </Toolbar>
       <ErrorBox error={error} />
-      {!data ? <Loading /> : !data.list.length ? <Empty>還沒有公告</Empty> : (
-        <div className="space-y-3">{data.list.map((a: any) => {
+      {!data ? <Loading /> : !list.length ? <Empty>{data.list.length ? '沒有符合條件的公告' : '還沒有公告'}</Empty> : (
+        <div className="space-y-3">{list.map((a: any) => {
           const expired = a.expireDate && d10(a.expireDate) < today();
           const scheduled = d10(a.publishDate) > today();
           return (

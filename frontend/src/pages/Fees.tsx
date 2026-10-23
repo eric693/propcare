@@ -4,7 +4,7 @@ import { FileText, Plus, Printer } from 'lucide-react';
 import api from '../api/client';
 import { Page } from '../components/Layout';
 import HowTo from '../components/HowTo';
-import { act, Empty, ErrorBox, Field, FormModal, Loading, Modal, Stat, Tabs, toast, useLoad } from '../components/ui';
+import { act, Empty, ErrorBox, Field, Filter, FormModal, Loading, matches, Modal, SearchBox, Stat, Tabs, toast, Toolbar, useLoad } from '../components/ui';
 import { useAuth, useCanWrite } from '../context/AuthContext';
 import { addMonth, d10, L, money, thisMonth, today } from '../lib/format';
 import { Bill } from '../types';
@@ -35,7 +35,7 @@ function Bills() {
   const [paying, setPaying] = useState<Bill | null>(null);
   const [adjust, setAdjust] = useState<Bill | null>(null);
   const bills = data ?? [];
-  const shown = bills.filter((b) => (!status || b.status === status) && (!q || b.unit.label.includes(q) || b.unit.ownerName.includes(q)));
+  const shown = bills.filter((b) => (!status || b.status === status) && matches(q, b.unit.label, b.unit.ownerName, b.otherNote, ...b.payments.map((p) => p.receiptNo)));
   const valid = bills.filter((b) => b.status !== 'VOID');
   const billed = valid.reduce((s, b) => s + b.total, 0), paid = valid.reduce((s, b) => s + b.paid, 0);
 
@@ -45,8 +45,8 @@ function Bills() {
         <button className="btn-ghost btn-sm" onClick={() => setPeriod(addMonth(period, -1))}>‹</button>
         <input className="input w-36" type="month" value={period} onChange={(e) => e.target.value && setPeriod(e.target.value)} />
         <button className="btn-ghost btn-sm" onClick={() => setPeriod(addMonth(period, 1))}>›</button>
-        <select className="input w-auto" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">全部狀態</option>{Object.entries(L.bill).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-        <input className="input max-w-[12rem]" placeholder="搜尋戶別、所有權人" value={q} onChange={(e) => setQ(e.target.value)} />
+        <Filter value={status} onChange={setStatus} all="全部狀態" options={L.bill} />
+        <SearchBox value={q} onChange={setQ} placeholder="搜尋戶別、所有權人、收據號碼" />
         {canWrite && <button className="btn-primary ml-auto" onClick={() => setGen(true)}><Plus className="w-4 h-4" />開立 {period} 帳單</button>}
       </div>
       <ErrorBox error={error} />
@@ -61,7 +61,7 @@ function Bills() {
           {!bills.length ? <Empty>{period} 還沒有帳單。{canWrite && '按右上角「開立帳單」，系統會依每戶坪數與車位自動計算。'}</Empty> : (
             <div className="card p-0 overflow-x-auto"><table className="tbl">
               <thead><tr><th>戶別</th><th>所有權人</th><th className="text-right">管理費</th><th className="text-right">車位</th><th className="text-right">其他</th><th className="text-right">應繳</th><th className="text-right">已繳</th><th>狀態</th><th>收據</th><th /></tr></thead>
-              <tbody>{shown.map((b) => (
+              <tbody>{!shown.length && <tr><td colSpan={10} className="text-center text-gray-400 py-6">沒有符合條件的帳單</td></tr>}{shown.map((b) => (
                 <tr key={b.id}>
                   <td className="font-semibold">{b.unit.label}</td><td className="text-gray-500">{b.unit.ownerName}</td>
                   <td className="num text-right">{money(b.amountMgmt)}</td><td className="num text-right">{b.amountParking ? money(b.amountParking) : '-'}</td>
@@ -128,7 +128,11 @@ function AdjustForm({ bill, onClose, onSaved }: { bill: Bill; onClose: () => voi
     }}>
       <Field label="其他費用"><input className="input" type="number" value={f.amountOther} onChange={(e) => setF({ ...f, amountOther: e.target.value })} /></Field>
       <Field label="說明"><input className="input" value={f.otherNote} onChange={(e) => setF({ ...f, otherNote: e.target.value })} /></Field>
-      {bill.paid === 0 && <div className="sm:col-span-2"><button className="btn-danger btn-sm" onClick={async () => { if (confirm('作廢這張帳單？')) { if (await act(() => api.put(`/bills/${bill.id}`, { void: true }), '已作廢')) { onSaved(); onClose(); } } }}>作廢這張帳單</button></div>}
+      {bill.paid === 0 && <div className="sm:col-span-2 flex flex-wrap gap-2 items-center">
+        {!bill.payments.length && <button className="btn-danger btn-sm" onClick={async () => { if (confirm('刪除這張帳單？（開錯帳單時使用）')) { if (await act(() => api.delete(`/bills/${bill.id}`), '已刪除')) { onSaved(); onClose(); } } }}>刪除帳單</button>}
+        <button className="btn-ghost btn-sm text-red-500" onClick={async () => { if (confirm('作廢這張帳單？作廢後保留紀錄。')) { if (await act(() => api.put(`/bills/${bill.id}`, { void: true }), '已作廢')) { onSaved(); onClose(); } } }}>作廢帳單</button>
+        <span className="text-xs text-gray-400">曾有收款紀錄的帳單只能作廢，不能刪除。</span>
+      </div>}
     </FormModal>
   );
 }
@@ -139,29 +143,48 @@ function Payments() {
   const [from, setFrom] = useState(`${thisMonth()}-01`);
   const [to, setTo] = useState(today());
   const { data, error, reload } = useLoad(() => api.get<any[]>(`/payments?from=${from}&to=${to}`).then((r) => r.data), [cid, from, to]);
-  const valid = (data ?? []).filter((p) => !p.voided);
+  const [q, setQ] = useState('');
+  const [method, setMethod] = useState('');
+  const [state, setState] = useState('');
+  const [edit, setEdit] = useState<any>(null);
+  const shown = (data ?? []).filter((p) => (!method || p.method === method) && (!state || (state === 'void' ? p.voided : !p.voided))
+    && matches(q, p.receiptNo, p.unit.label, p.bill.period, p.note, p.createdBy));
+  const valid = shown.filter((p) => !p.voided);
   return (
     <>
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <input className="input w-40" type="date" value={from} onChange={(e) => setFrom(e.target.value)} /><span className="text-gray-400">～</span>
         <input className="input w-40" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        <div className="text-sm text-gray-500 ml-auto">共 {valid.length} 筆・<b className="text-gray-800">{money(valid.reduce((s, p) => s + p.amount, 0))}</b> 元</div>
+        <div className="text-sm text-gray-500 ml-auto">有效 {valid.length} 筆・<b className="text-gray-800">{money(valid.reduce((s, p) => s + p.amount, 0))}</b> 元</div>
       </div>
+      <Toolbar>
+        <SearchBox value={q} onChange={setQ} placeholder="搜尋收據號碼、戶別、期別、備註" />
+        <Filter value={method} onChange={setMethod} all="全部收款方式" options={L.method} />
+        <Filter value={state} onChange={setState} all="含作廢" options={[['ok', '有效'], ['void', '已作廢']]} />
+      </Toolbar>
       <ErrorBox error={error} />
-      {!data ? <Loading /> : !data.length ? <Empty>這段期間沒有收款</Empty> : (
+      {!data ? <Loading /> : !shown.length ? <Empty>{data.length ? '沒有符合條件的收款' : '這段期間沒有收款'}</Empty> : (
         <div className="card p-0 overflow-x-auto"><table className="tbl">
           <thead><tr><th>收款日</th><th>收據號碼</th><th>戶別</th><th>期別</th><th>方式</th><th className="text-right">金額</th><th>經手</th><th>備註</th><th /></tr></thead>
-          <tbody>{data.map((p) => (
+          <tbody>{shown.map((p) => (
             <tr key={p.id} className={p.voided ? 'opacity-50 line-through' : ''}>
               <td>{d10(p.paidDate)}</td><td className="font-mono text-xs">{p.receiptNo}</td><td>{p.unit.label}</td><td>{p.bill.period}</td><td>{L.method[p.method]}</td>
               <td className="num text-right font-semibold">{money(p.amount)}</td><td className="text-gray-500">{p.createdBy}</td><td className="text-xs text-gray-500 no-underline">{p.note}</td>
-              <td className="text-right">{canWrite && !p.voided && <button className="btn-ghost btn-sm text-red-500" onClick={async () => {
+              <td className="text-right whitespace-nowrap">{canWrite && !p.voided && <button className="btn-ghost btn-sm" onClick={() => setEdit({ id: p.id, receiptNo: p.receiptNo, method: p.method, paidDate: d10(p.paidDate), note: p.note })}>編輯</button>}{canWrite && !p.voided && <button className="btn-ghost btn-sm text-red-500" onClick={async () => {
                 const reason = prompt(`作廢收據 ${p.receiptNo}（${money(p.amount)} 元）的原因：`);
                 if (reason) { await act(() => api.post(`/payments/${p.id}/void`, { reason }), '已作廢'); reload(); }
               }}>作廢</button>}</td>
             </tr>
           ))}</tbody>
         </table></div>
+      )}
+      {edit && (
+        <FormModal title={`修改收款 ${edit.receiptNo}`} onClose={() => setEdit(null)} onSubmit={async () => { await api.put(`/payments/${edit.id}`, { method: edit.method, paidDate: edit.paidDate, note: edit.note }); reload(); }}>
+          <Field label="收款方式"><select className="input" value={edit.method} onChange={(e) => setEdit({ ...edit, method: e.target.value })}>{Object.entries(L.method).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+          <Field label="收款日"><input className="input" type="date" value={edit.paidDate} onChange={(e) => setEdit({ ...edit, paidDate: e.target.value })} /></Field>
+          <Field label="備註" full><input className="input" value={edit.note} onChange={(e) => setEdit({ ...edit, note: e.target.value })} /></Field>
+          <p className="text-xs text-gray-400 sm:col-span-2">金額收錯請「作廢」這筆收款後重新登錄，帳才不會亂。</p>
+        </FormModal>
       )}
     </>
   );
@@ -174,18 +197,25 @@ function Arrears() {
   const { data: community } = useLoad(() => api.get<any>('/community').then((r) => r.data), [cid]);
   const [letter, setLetter] = useState<any>(null);
   const [paying, setPaying] = useState<any>(null);
-  const rows = data ?? [];
+  const [q, setQ] = useState('');
+  const [level, setLevel] = useState('');
+  const all = data ?? [];
+  const rows = all.filter((r) => (!level || (level === 'over2' ? r.overTwo : !r.overTwo)) && matches(q, r.label, r.ownerName, ...r.contacts.flatMap((c: any) => [c.name, c.phone])));
   return (
     <>
       <ErrorBox error={error} />
       {!data ? <Loading /> : (
         <>
           <div className="grid grid-cols-3 gap-3 mb-3">
-            <Stat label="欠費戶數" value={rows.length} />
-            <Stat label="逾二期" value={rows.filter((r) => r.overTwo).length} tone={rows.some((r) => r.overTwo) ? 'bad' : undefined} sub="可依條例第 21 條催告" />
-            <Stat label="欠費總額" value={money(rows.reduce((s, r) => s + r.amount, 0))} />
+            <Stat label="欠費戶數" value={all.length} />
+            <Stat label="逾二期" value={all.filter((r) => r.overTwo).length} tone={all.some((r) => r.overTwo) ? 'bad' : undefined} sub="可依條例第 21 條催告" />
+            <Stat label="欠費總額" value={money(all.reduce((s, r) => s + r.amount, 0))} />
           </div>
-          {!rows.length ? <Empty>目前沒有逾期未繳的戶別</Empty> : (
+          <Toolbar count={`顯示 ${rows.length} / ${all.length} 戶`}>
+            <SearchBox value={q} onChange={setQ} placeholder="搜尋戶別、所有權人、聯絡人、電話" />
+            <Filter value={level} onChange={setLevel} all="全部欠費戶" options={[['over2', '逾二期'], ['under', '二期以內']]} />
+          </Toolbar>
+          {!rows.length ? <Empty>{all.length ? '沒有符合條件的欠費戶' : '目前沒有逾期未繳的戶別'}</Empty> : (
             <div className="card p-0 overflow-x-auto"><table className="tbl">
               <thead><tr><th>戶別</th><th>所有權人</th><th>聯絡人</th><th>欠繳期別</th><th className="text-right">欠費金額</th><th /></tr></thead>
               <tbody>{rows.map((r) => (

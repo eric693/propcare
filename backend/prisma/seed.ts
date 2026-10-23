@@ -6,6 +6,7 @@ import bcrypt from 'bcryptjs';
 import { PrismaClient } from '@prisma/client';
 import { generateBills, recordPayment } from '../src/services/feeService';
 import { DEFAULT_INSPECTIONS } from '../src/controllers/communityController';
+import { nextDocNo } from '../src/services/common';
 import { addDays, addMonths, toDate, todayStr } from '../src/utils/dates';
 
 const prisma = new PrismaClient();
@@ -146,7 +147,7 @@ async function seedCommunity(opts: { name: string; address: string; buildings: s
   ];
   for (const [i, [cat, loc, title, pr, st]] of reps.entries()) {
     const unit = units[(i * 13) % units.length];
-    const r = await prisma.repair.create({ data: { communityId: c.id, repairNo: `R${t.replace(/-/g, '')}9${i}${c.id.slice(-2)}`, unitId: i % 2 ? unit.id : null, category: cat, location: loc, title, priority: pr, status: st, createdAt: new Date(Date.now() - (i + 1) * 86400000), assignee: st !== 'NEW' ? '永昇電梯 李師傅' : '' } });
+    const r = await prisma.repair.create({ data: { communityId: c.id, repairNo: await nextDocNo('R'), unitId: i % 2 ? unit.id : null, category: cat, location: loc, title, priority: pr, status: st, createdAt: new Date(Date.now() - (i + 1) * 86400000), assignee: st !== 'NEW' ? '永昇電梯 李師傅' : '' } });
     await prisma.repairLog.create({ data: { repairId: r.id, byName: '管理中心', text: i % 2 ? '住戶線上報修' : '管理中心登記報修' } });
     if (st !== 'NEW') await prisma.repairLog.create({ data: { repairId: r.id, byName: '管理中心', text: '已聯絡廠商，預計明日到場' } });
   }
