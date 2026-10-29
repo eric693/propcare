@@ -44,7 +44,7 @@ function Docs() {
           <thead><tr><th>文件</th><th>類別</th><th>住戶可看</th><th>大小</th><th>上傳</th><th /></tr></thead>
           <tbody>{list.map((d) => (
             <tr key={d.id}>
-              <td><button className="font-semibold text-brand hover:underline inline-flex items-center gap-1.5 text-left" onClick={() => openFile(`/documents/${d.id}/file`)}><FileText className="w-4 h-4 shrink-0" />{d.title}</button><div className="text-xs text-gray-400">{d.fileName}</div></td>
+              <td><button className="font-semibold text-brand hover:underline inline-flex items-center gap-1.5 text-left" onClick={() => openFile(`/documents/${d.id}/file`, undefined, d.fileName)}><FileText className="w-4 h-4 shrink-0" />{d.title}</button><div className="text-xs text-gray-400">{d.fileName}</div></td>
               <td><span className="badge-mute">{d.category}</span></td>
               <td>{d.forResidents ? <span className="badge-ok">公開</span> : <span className="badge-mute">僅管理端</span>}</td>
               <td className="num text-gray-500">{fileSize(d.size)}</td>
@@ -87,15 +87,20 @@ function Polls() {
   const canWrite = useCanWrite();
   const { data, error, reload } = useLoad(() => api.get<any>('/polls').then((r) => r.data), [cid]);
   const [edit, setEdit] = useState<any>(null);
+  const [q, setQ] = useState('');
+  const [st, setSt] = useState('');
+  const polls = (data?.polls ?? []).filter((p: any) => (!st || (st === 'open' ? p.endDate >= today() : p.endDate < today())) && matches(q, p.title, p.description, ...p.options));
   return (
     <>
       <div className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mb-3">意見調查用來了解住戶想法（一戶一票），<b>不是</b>區分所有權人會議的法定表決；須依法決議的事項請到「會議與表決」辦理。</div>
-      <Toolbar count={data && `${data.polls.length} 項調查・全社區 ${data.units} 戶`}>
+      <Toolbar count={data && `顯示 ${polls.length} / ${data.polls.length} 項・全社區 ${data.units} 戶`}>
+        <SearchBox value={q} onChange={setQ} placeholder="搜尋調查主題、選項" />
+        <Filter value={st} onChange={setSt} all="全部狀態" options={[['open', '進行中'], ['closed', '已截止']]} />
         {canWrite && <button className="btn-primary" onClick={() => setEdit({})}><Plus className="w-4 h-4" />發起調查</button>}
       </Toolbar>
       <ErrorBox error={error} />
-      {!data ? <Loading /> : !data.polls.length ? <Empty>還沒有意見調查</Empty> : (
-        <div className="grid lg:grid-cols-2 gap-4">{data.polls.map((p: any) => {
+      {!data ? <Loading /> : !polls.length ? <Empty>{data.polls.length ? '沒有符合條件的調查' : '還沒有意見調查'}</Empty> : (
+        <div className="grid lg:grid-cols-2 gap-4">{polls.map((p: any) => {
           const open = p.endDate >= today();
           return (
             <div key={p.id} className="card">

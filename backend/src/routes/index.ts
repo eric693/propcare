@@ -11,6 +11,7 @@ import * as vendor from '../controllers/vendorController';
 import * as meet from '../controllers/meetingController';
 import * as res from '../controllers/residentController';
 import * as x from '../controllers/extraController';
+import * as pay from '../controllers/payController';
 
 const router = Router();
 
@@ -18,6 +19,9 @@ const router = Router();
 router.post('/auth/login', loginRateLimit, auth.login);
 router.get('/auth/demo', auth.demoAccount);
 router.post('/resident/login', loginRateLimit, res.residentLogin);
+// 綠界伺服器通知（以檢查碼驗證，不需登入）
+router.post('/pay/ecpay/notify', pay.ecpayNotify);
+router.post('/pay/ecpay/info', pay.ecpayPaymentInfo);
 
 // ── 住戶端 ──
 const R = Router();
@@ -42,8 +46,11 @@ R.get('/report', res.residentReport);
 R.get('/meetings', res.residentMeetings);
 R.post('/line/code', res.residentLineCode);
 R.post('/privacy', x.residentPrivacy);
+R.get('/pay', pay.residentPayInfo);
+R.post('/pay', pay.residentPayCreate);
 R.get('/feedback', x.residentFeedback);
 R.post('/feedback', x.residentCreateFeedback);
+R.put('/feedback/:id', x.residentUpdateFeedback);
 R.delete('/feedback/:id', x.residentDeleteFeedback);
 R.get('/documents', x.residentDocuments);
 R.get('/documents/:id/file', x.residentDownloadDocument);
@@ -170,6 +177,7 @@ C.put('/visitors/:id', canWrite, x.saveVisitor);
 C.post('/visitors/:id/leave', canWrite, x.visitorLeave);
 C.delete('/visitors/:id', canWrite, x.deleteVisitor);
 C.get('/feedback', x.listFeedback);
+C.post('/feedback', canWrite, x.createFeedback);
 C.put('/feedback/:id', canWrite, x.replyFeedback);
 C.delete('/feedback/:id', canWrite, x.deleteFeedback);
 C.get('/documents', x.listDocuments);
@@ -189,7 +197,14 @@ C.get('/patrol', x.listPatrol);
 C.post('/patrol/points', canWrite, x.savePatrolPoint);
 C.put('/patrol/points/:id', canWrite, x.savePatrolPoint);
 C.delete('/patrol/points/:id', canWrite, x.deletePatrolPoint);
+C.put('/patrol/logs/:id', canWrite, x.updatePatrolLog);
+C.delete('/patrol/logs/:id', canWrite, x.deletePatrolLog);
 C.post('/export-log', x.logExport);
+C.get('/line/status', x.lineStatus);
+C.post('/line/test', x.lineTest);
+C.get('/online-payments', pay.listOnlinePayments);
+C.put('/online-payments/:id', canWrite, pay.updateOnlinePayment);
+C.delete('/online-payments/:id', canWrite, pay.deleteOnlinePayment);
 
 router.use(C);
 

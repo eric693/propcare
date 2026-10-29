@@ -31,17 +31,28 @@ const communitySchema = z.object({
   arrearsAmount: z.coerce.number().int().min(0).default(0),
   vaBank: z.string().trim().max(50).default(''),
   vaPrefix: z.string().trim().regex(/^(\d{3,10})?$/, '虛擬帳號前綴須為 3～10 位數字').default(''),
+  onlinePay: z.boolean().default(false),
+  ecpayMerchantId: z.string().trim().regex(/^(\d{7,10})?$/, '綠界特店編號為 7～10 位數字').default(''),
+  ecpayHashKey: z.string().trim().max(50).default(''),
+  ecpayHashIV: z.string().trim().max(50).default(''),
+  ecpayStage: z.boolean().default(true),
   note: z.string().trim().max(1000).default(''),
 });
 
 export async function listCommunities(req: AuthRequest, res: Response) {
   const ids = await communityIdsOf(req.user!);
   const list = await prisma.community.findMany({ where: { id: { in: ids } }, orderBy: { name: 'asc' } });
-  res.json(list);
+  res.json(list.map(publicCommunity));
+}
+
+/** 金流金鑰只存後端：回傳前端時移除，只告知是否已設定 */
+export function publicCommunity<T extends { ecpayHashKey: string; ecpayHashIV: string }>(c: T) {
+  const { ecpayHashKey, ecpayHashIV, ...rest } = c;
+  return { ...rest, ecpayKeySet: Boolean(ecpayHashKey && ecpayHashIV) };
 }
 
 export async function getCommunity(req: AuthRequest, res: Response) {
-  res.json(req.community);
+  res.json(publicCommunity(req.community!));
 }
 
 export async function createCommunity(req: AuthRequest, res: Response) {
@@ -53,16 +64,24 @@ export async function createCommunity(req: AuthRequest, res: Response) {
     data: DEFAULT_INSPECTIONS.map((i) => ({ communityId: c.id, kind: i.kind, title: i.title, cycleMonths: i.cycle, dueDate: toDate(addDays(t, 30)), note: i.note })),
   });
   await audit(c.id, { type: 'staff', id: req.user!.id, name: req.user!.name }, '新增社區', c.name);
-  res.status(201).json(c);
+  res.status(201).json(publicCommunity(c));
 }
 
 export async function updateCommunity(req: AuthRequest, res: Response) {
   const data = parse(communitySchema.partial(), req.body);
+  // 金鑰欄位留白表示不變更（前端拿不到原值）
+  if (!data.ecpayHashKey) delete data.ecpayHashKey;
+  if (!data.ecpayHashIV) delete data.ecpayHashIV;
+  const cur = req.community!;
+  const stage = data.ecpayStage ?? cur.ecpayStage;
+  if ((data.onlinePay ?? cur.onlinePay) && !stage && !((data.ecpayMerchantId ?? cur.ecpayMerchantId) && (data.ecpayHashKey ?? cur.ecpayHashKey) && (data.ecpayHashIV ?? cur.ecpayHashIV))) {
+    throw new HttpError(400, '正式環境須填寫綠界特店編號、HashKey 與 HashIV');
+  }
   const before = req.community!;
   const c = await prisma.community.update({ where: { id: req.cid! }, data });
   if (c.vaPrefix && c.vaPrefix !== before.vaPrefix) await assignVaCodes(c.id, c.vaPrefix);
   await audit(c.id, { type: 'staff', id: req.user!.id, name: req.user!.name }, '修改社區設定');
-  res.json(c);
+  res.json(publicCommunity(c));
 }
 
 /** 每戶虛擬帳號＝前綴＋序號，共 14 碼；已有序號者沿用，新戶接續編號 */

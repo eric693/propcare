@@ -202,6 +202,7 @@ export function RBills() {
   return (
     <>
       <h2 className="font-bold mb-3">管理費帳單</h2>
+      <OnlinePay />
       <Tabs value={st} onChange={setSt} items={[['all', '全部', data.length], ['owe', '未繳清', data.filter((b) => b.status !== 'PAID').length], ['paid', '已繳清']]} />
       {me?.vaCode ? (
         <div className="card mb-3 border-brand/30 bg-brand-50">
@@ -221,6 +222,36 @@ export function RBills() {
         </div>
       ))}
     </>
+  );
+}
+
+/** 線上繳費：建立訂單後以表單 POST 到綠界付款頁 */
+function OnlinePay() {
+  const { data: p } = useLoad(() => rapi.get<any>('/resident/pay').then((r) => r.data), []);
+  const [busy, setBusy] = useState('');
+  if (!p?.enabled) return null;
+  const go = async (method: string) => {
+    setBusy(method);
+    try {
+      const { action, fields } = (await rapi.post('/resident/pay', { method })).data;
+      const form = document.createElement('form');
+      form.method = 'POST'; form.action = action;
+      for (const [k, v] of Object.entries(fields)) { const i = document.createElement('input'); i.type = 'hidden'; i.name = k; i.value = String(v); form.appendChild(i); }
+      document.body.appendChild(form); form.submit();
+    } catch (e) { toast(errMsg(e), true); setBusy(''); }
+  };
+  return (
+    <div className="card mb-3">
+      <div className="flex items-center"><h3 className="font-semibold text-sm">線上繳費</h3>{p.stage && <span className="badge-warn ml-2">測試環境</span>}</div>
+      {p.amount > 0 ? <>
+        <div className="text-sm text-gray-600 mt-1">未繳 {p.periods.join('、')}，共 <b className="text-red-600 num">{money(p.amount)}</b> 元</div>
+        <div className="grid grid-cols-2 gap-2 mt-3">{Object.entries(p.methods as Record<string, string>).map(([k, v]) => (
+          <button key={k} className="btn-secondary" disabled={!!busy || ((k === 'CVS' || k === 'BARCODE') && p.amount > 20000)} onClick={() => go(k)}>{busy === k ? '前往付款…' : v}</button>
+        ))}</div>
+        <p className="text-[11px] text-gray-400 mt-2">付款由綠界金流處理，成功後自動銷帳並開立收據。超商繳費單筆上限 2 萬元。</p>
+      </> : <div className="text-sm text-green-700 mt-1">目前沒有未繳的管理費</div>}
+      {p.pending.length > 0 && <div className="mt-3 text-xs bg-amber-50 text-amber-800 rounded-lg px-3 py-2">{p.pending.map((x: any) => <div key={x.id}>待繳 {money(x.amount)} 元：{x.payInfo}</div>)}</div>}
+    </div>
   );
 }
 
@@ -282,24 +313,34 @@ export function RRepairs() {
 
 function RFeedback() {
   const { data, error, reload } = useLoad(() => rapi.get<any[]>('/resident/feedback').then((r) => r.data), []);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<any>(null);
   const empty = { category: '建議', title: '', content: '' };
   const [f, setF] = useState(empty);
+  const [q, setQ] = useState('');
+  const [st, setSt] = useState('');
+  const list = (data ?? []).filter((x) => (!st || x.status === st) && matches(q, x.title, x.content, x.reply, x.category));
+  const open = (x: any) => { setF(x.id ? { category: x.category, title: x.title, content: x.content } : empty); setAdding(x); };
   return (
     <>
-      <div className="flex items-center mb-3"><h2 className="font-bold">意見反映</h2><button className="btn-primary btn-sm ml-auto" onClick={() => setAdding(true)}>我要反映</button></div>
+      <div className="flex items-center mb-3"><h2 className="font-bold">意見反映</h2><button className="btn-primary btn-sm ml-auto" onClick={() => open({})}>我要反映</button></div>
+      {(data?.length ?? 0) > 3 && <div className="flex gap-2 mb-3"><SearchBox value={q} onChange={setQ} placeholder="搜尋意見" /><Filter value={st} onChange={setSt} all="全部" options={L.feedbackStatus} /></div>}
       <ErrorBox error={error} />
-      {!data ? <Loading /> : !data.length ? <Empty>有建議或問題（噪音、環境、停車…）都可以在這裡告訴管理中心</Empty> : data.map((x) => (
+      {!data ? <Loading /> : !list.length ? <Empty>{data.length ? '沒有符合的意見' : '有建議或問題（噪音、環境、停車…）都可以在這裡告訴管理中心'}</Empty> : list.map((x) => (
         <div key={x.id} className="card mb-2">
           <div className="flex items-center gap-2"><span className="badge-mute">{x.category}</span><b className="flex-1 text-sm truncate">{x.title}</b><span className={x.status === 'OPEN' ? 'badge-warn' : x.status === 'REPLIED' ? 'badge-info' : 'badge-ok'}>{L.feedbackStatus[x.status]}</span></div>
           <div className="text-xs text-gray-400 mt-0.5">{dt(x.createdAt)}</div>
           {x.content && <p className="text-sm text-gray-600 whitespace-pre-wrap mt-1">{x.content}</p>}
           {x.reply && <div className="mt-2 text-sm bg-brand-50 rounded-xl px-3 py-2"><div className="text-xs text-brand mb-0.5">管理中心回覆</div><div className="whitespace-pre-wrap">{x.reply}</div></div>}
+          {x.status === 'OPEN' && !x.reply && <button className="btn-ghost btn-sm mt-1" onClick={() => open(x)}>修改</button>}
           {x.status === 'OPEN' && !x.reply && <button className="btn-ghost btn-sm text-red-500 mt-1" onClick={async () => { if (confirm('撤回這則意見？')) { try { await rapi.delete(`/resident/feedback/${x.id}`); toast('已撤回'); reload(); } catch (e) { toast(errMsg(e), true); } } }}>撤回</button>}
         </div>
       ))}
       {adding && (
-        <FormModal title="我要反映" submitText="送出" onClose={() => setAdding(false)} onSubmit={async () => { await rapi.post('/resident/feedback', f); toast('已送出，管理中心回覆後會通知您'); setF(empty); reload(); }}>
+        <FormModal title={adding.id ? '修改意見' : '我要反映'} submitText={adding.id ? '儲存' : '送出'} onClose={() => setAdding(null)} onSubmit={async () => {
+          if (adding.id) { await rapi.put(`/resident/feedback/${adding.id}`, f); toast('已修改'); }
+          else { await rapi.post('/resident/feedback', f); toast('已送出，管理中心回覆後會通知您'); }
+          setF(empty); reload();
+        }}>
           <Field label="類別"><select className="input" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{FEEDBACK_CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select></Field>
           <Field label="主旨" full><input className="input" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} /></Field>
           <Field label="內容" full><textarea className="input h-28" value={f.content} onChange={(e) => setF({ ...f, content: e.target.value })} /></Field>
@@ -368,7 +409,7 @@ function RDocs() {
   if (!data) return <Loading />;
   if (!data.length) return <Empty>社區尚未上傳文件</Empty>;
   return <div className="card divide-y divide-gray-50 p-0">{data.map((d) => (
-    <button key={d.id} className="w-full text-left px-4 py-3 hover:bg-gray-50" onClick={() => openFile(`/resident/documents/${d.id}/file`, rapi)}>
+    <button key={d.id} className="w-full text-left px-4 py-3 hover:bg-gray-50" onClick={() => openFile(`/resident/documents/${d.id}/file`, rapi, d.fileName)}>
       <div className="flex items-center gap-2"><span className="badge-mute">{d.category}</span><b className="text-sm flex-1 truncate">{d.title}</b><span className="text-xs text-gray-400">{fileSize(d.size)}</span></div>
     </button>
   ))}</div>;

@@ -80,7 +80,7 @@ export async function pay(req: AuthRequest, res: Response) {
   const b = parse(z.object({
     billId: z.string(),
     amount: z.coerce.number().int().positive('收款金額必須大於 0'),
-    method: z.enum(['CASH', 'TRANSFER', 'ATM', 'STORE', 'OTHER']).default('CASH'),
+    method: z.enum(['CASH', 'TRANSFER', 'ATM', 'STORE', 'CARD', 'OTHER']).default('CASH'),
     paidDate: zDate.default(todayStr()),
     note: z.string().trim().max(200).default(''),
   }), req.body);
@@ -93,7 +93,7 @@ export async function payUnit(req: AuthRequest, res: Response) {
   const b = parse(z.object({
     unitId: z.string(),
     amount: z.coerce.number().int().positive('收款金額必須大於 0'),
-    method: z.enum(['CASH', 'TRANSFER', 'ATM', 'STORE', 'OTHER']).default('CASH'),
+    method: z.enum(['CASH', 'TRANSFER', 'ATM', 'STORE', 'CARD', 'OTHER']).default('CASH'),
     paidDate: zDate.default(todayStr()),
     note: z.string().trim().max(200).default(''),
   }), req.body);
@@ -102,7 +102,7 @@ export async function payUnit(req: AuthRequest, res: Response) {
 }
 
 /** 整戶收款：由最舊的未繳帳單依序沖銷（人工收款與銀行入帳匯入共用） */
-export async function payUnitOldestFirst(p: { communityId: string; unitId: string; amount: number; method: 'CASH' | 'TRANSFER' | 'ATM' | 'STORE' | 'OTHER'; paidDate: string; note: string; by: string }) {
+export async function payUnitOldestFirst(p: { communityId: string; unitId: string; amount: number; method: 'CASH' | 'TRANSFER' | 'ATM' | 'STORE' | 'CARD' | 'OTHER'; paidDate: string; note: string; by: string }) {
   const bills = await prisma.feeBill.findMany({ where: { communityId: p.communityId, unitId: p.unitId, status: { in: ['UNPAID', 'PARTIAL'] } }, orderBy: { period: 'asc' } });
   const owed = bills.reduce((s, x) => s + x.total - x.paid, 0);
   if (!bills.length) throw new HttpError(400, '這一戶沒有未繳帳單');
@@ -137,7 +137,7 @@ export async function cancelPayment(req: AuthRequest, res: Response) {
 /** 修改收款：方式、日期、備註（金額要改請作廢後重收，避免帳不平）；收支帳日期一併更新 */
 export async function updatePayment(req: AuthRequest, res: Response) {
   const b = parse(z.object({
-    method: z.enum(['CASH', 'TRANSFER', 'ATM', 'STORE', 'OTHER']).optional(),
+    method: z.enum(['CASH', 'TRANSFER', 'ATM', 'STORE', 'CARD', 'OTHER']).optional(),
     paidDate: zDate.optional(), note: z.string().trim().max(200).optional(),
   }), req.body);
   const p = await prisma.feePayment.findFirst({ where: { id: req.params.id, communityId: req.cid! } });

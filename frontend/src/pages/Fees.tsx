@@ -12,7 +12,7 @@ import { logExport } from '../lib/exportLog';
 import { Bill } from '../types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-type Tab = 'bills' | 'payments' | 'arrears' | 'bank';
+type Tab = 'bills' | 'payments' | 'arrears' | 'bank' | 'online';
 
 export default function Fees() {
   const [sp, setSp] = useSearchParams();
@@ -20,8 +20,8 @@ export default function Fees() {
   return (
     <Page title="管理費">
       <HowTo module="fees" />
-      <Tabs value={tab} onChange={(t) => setSp({ tab: t })} items={[['bills', '帳單與收款'], ['payments', '收款紀錄'], ['arrears', '欠費與催告'], ['bank', '銀行入帳匯入']]} />
-      {tab === 'bills' ? <Bills /> : tab === 'payments' ? <Payments /> : tab === 'arrears' ? <Arrears /> : <BankImport />}
+      <Tabs value={tab} onChange={(t) => setSp({ tab: t })} items={[['bills', '帳單與收款'], ['payments', '收款紀錄'], ['arrears', '欠費與催告'], ['bank', '銀行入帳匯入'], ['online', '線上繳費']]} />
+      {tab === 'bills' ? <Bills /> : tab === 'payments' ? <Payments /> : tab === 'arrears' ? <Arrears /> : tab === 'bank' ? <BankImport /> : <OnlinePayments />}
     </Page>
   );
 }
@@ -408,7 +408,7 @@ function BankImport() {
       {canWrite && <div className="card mb-3">
         <textarea className="input font-mono text-xs" rows={6} placeholder={'交易日期,摘要,存入金額,虛擬帳號\n115/10/28,ATM轉入,3500,12300000000001'} value={text} onChange={(e) => setText(e.target.value)} />
         <div className="flex flex-wrap items-center gap-2 mt-2">
-          <label className="btn-secondary cursor-pointer"><Upload className="w-4 h-4" />選擇 CSV 檔<input type="file" accept=".csv,.txt" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (f) setText(await readText(f)); }} /></label>
+          <label className="btn-secondary cursor-pointer"><Upload className="w-4 h-4" />選擇檔案（Excel／CSV）<input type="file" accept=".csv,.txt,.xls,.xlsx" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) { try { setText(await readStatement(f)); } catch { toast('讀不到這個檔案，請另存成 CSV 再試', true); } } }} /></label>
           <button className="btn-primary ml-auto" disabled={!text.trim() || busy} onClick={preview}>比對戶別</button>
         </div>
       </div>}
@@ -438,9 +438,68 @@ function BankImport() {
   );
 }
 
-/** 讀取 CSV：先試 UTF-8，出現亂碼時改用 Big5（台灣網銀常見） */
+/** 讀取銀行明細：Excel 轉成 CSV（只載入一次試算表套件）；CSV 先試 UTF-8，亂碼時改用 Big5 */
+async function readStatement(f: File) {
+  if (/\.xlsx?$/i.test(f.name)) {
+    const XLSX = await import('xlsx');
+    const wb = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true });
+    return XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]], { dateNF: 'yyyy/mm/dd', blankrows: false });
+  }
+  return readText(f);
+}
+
 async function readText(f: File) {
   const buf = await f.arrayBuffer();
   const utf8 = new TextDecoder('utf-8').decode(buf);
   return utf8.includes('\uFFFD') ? new TextDecoder('big5').decode(buf) : utf8;
+}
+
+/** 線上繳費紀錄（綠界）：付款成功自動入帳；需人工處理的可標記完成 */
+function OnlinePayments() {
+  const { cid } = useAuth();
+  const canWrite = useCanWrite();
+  const { data, error, reload } = useLoad(() => api.get<any[]>('/online-payments').then((r) => r.data), [cid]);
+  const [q, setQ] = useState('');
+  const [st, setSt] = useState('');
+  const [method, setMethod] = useState('');
+  const all = data ?? [];
+  const rows = all.filter((p) => (!st || p.status === st) && (!method || p.method === method) && matches(q, p.unit.label, p.tradeNo, p.ecpayTradeNo, p.receiptNos, p.periods, p.rtnMsg));
+  const paid = all.filter((p) => p.status === 'PAID');
+  const METHOD: Record<string, string> = { Credit: '信用卡', CVS: '超商代碼', BARCODE: '超商條碼', ATM: 'ATM' };
+  const cls: Record<string, string> = { PENDING: 'badge-mute', PAID: 'badge-ok', FAILED: 'badge-mute', MISMATCH: 'badge-bad' };
+  return (
+    <>
+      <ErrorBox error={error} />
+      {data && <div className="grid grid-cols-3 gap-3 mb-3">
+        <Stat label="線上入帳" value={paid.length} sub={`${money(paid.reduce((s, p) => s + p.amount, 0))} 元`} tone="ok" />
+        <Stat label="待付款" value={all.filter((p) => p.status === 'PENDING').length} sub="住戶已建立訂單、尚未付款" />
+        <Stat label="需人工處理" value={all.filter((p) => p.status === 'MISMATCH').length} tone={all.some((p) => p.status === 'MISMATCH') ? 'bad' : undefined} />
+      </div>}
+      <Toolbar count={data && `顯示 ${rows.length} / ${all.length} 筆`}>
+        <SearchBox value={q} onChange={setQ} placeholder="搜尋戶別、訂單編號、綠界交易編號、收據" />
+        <Filter value={st} onChange={setSt} all="全部狀態" options={L.onlinePay} />
+        <Filter value={method} onChange={setMethod} all="全部方式" options={METHOD} />
+        <button className="btn-secondary" disabled={!rows.length} onClick={() => downloadCsv('線上繳費', ['建立時間', '戶別', '方式', '金額', '期別', '狀態', '訂單編號', '綠界交易編號', '付款時間', '收據', '說明'],
+          rows.map((p) => [d10(p.createdAt), p.unit.label, METHOD[p.method] ?? p.method, p.amount, p.periods, L.onlinePay[p.status], p.tradeNo, p.ecpayTradeNo, p.paidAt ? d10(p.paidAt) : '', p.receiptNos, p.rtnMsg]), logExport)}><Download className="w-4 h-4" />匯出 Excel</button>
+      </Toolbar>
+      {!data ? <Loading /> : !rows.length ? <Empty>{all.length ? '沒有符合條件的紀錄' : '還沒有線上繳費。到「社區設定」開通線上繳費後，住戶就能在手機上用信用卡、超商或 ATM 繳費。'}</Empty> : (
+        <div className="card p-0 overflow-x-auto"><table className="tbl">
+          <thead><tr><th>建立</th><th>戶別</th><th>方式</th><th className="text-right">金額</th><th>狀態</th><th>交易編號</th><th>收據／說明</th><th /></tr></thead>
+          <tbody>{rows.map((p) => (
+            <tr key={p.id}>
+              <td className="whitespace-nowrap text-xs">{d10(p.createdAt)}</td><td className="font-semibold">{p.unit.label}<div className="text-xs text-gray-400 font-normal">{p.periods}</div></td>
+              <td>{METHOD[p.method] ?? p.method}</td><td className="num text-right">{money(p.amount)}</td>
+              <td><span className={cls[p.status]}>{L.onlinePay[p.status]}</span></td>
+              <td className="text-xs font-mono">{p.tradeNo}<div className="text-gray-400">{p.ecpayTradeNo}</div></td>
+              <td className="text-xs">{p.receiptNos ? `收據 ${p.receiptNos.split(',').length} 張` : ''}<div className="text-gray-500">{p.payInfo || p.rtnMsg}</div></td>
+              <td className="text-right whitespace-nowrap">{canWrite && <>
+                {p.status === 'MISMATCH' && <button className="btn-secondary btn-sm" onClick={() => { const note = prompt('處理說明（例如：已人工沖帳／已退款）'); if (note) act(() => api.put(`/online-payments/${p.id}`, { status: 'PAID', note }), '已標記完成').then(reload); }}>標記已處理</button>}
+                {(p.status === 'PENDING' || p.status === 'FAILED') && <button className="btn-ghost btn-sm text-gray-400" onClick={() => confirm('刪除這筆未付款的訂單？') && act(() => api.delete(`/online-payments/${p.id}`), '已刪除').then(reload)}>刪除</button>}
+              </>}</td>
+            </tr>
+          ))}</tbody>
+        </table></div>
+      )}
+    </>
+  );
 }

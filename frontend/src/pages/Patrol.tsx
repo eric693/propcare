@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 import api, { errMsg } from '../api/client';
 import { Page } from '../components/Layout';
 import HowTo from '../components/HowTo';
-import { act, Empty, ErrorBox, Field, FormModal, Loading, Modal, Stat, Tabs, useLoad } from '../components/ui';
+import { act, Empty, ErrorBox, Field, Filter, FormModal, Loading, matches, Modal, SearchBox, Stat, Tabs, Toolbar, useLoad } from '../components/ui';
 import { useAuth, useCanWrite } from '../context/AuthContext';
 import { dt, today } from '../lib/format';
 
@@ -20,10 +20,17 @@ export default function Patrol() {
   const { data, error, reload } = useLoad(() => api.get<any>(`/patrol?date=${date}`).then((r) => r.data), [cid, date]);
   const [edit, setEdit] = useState<any>(null);
   const [print, setPrint] = useState(false);
+  const [q, setQ] = useState('');
+  const [pointF, setPointF] = useState('');
+  const [userF, setUserF] = useState('');
+  const [activeF, setActiveF] = useState('');
+  const [note, setNote] = useState<any>(null);
   const points: any[] = data?.points ?? [];
   const logs: any[] = data?.logs ?? [];
   const active = points.filter((p) => p.active);
   const done = new Set(logs.map((l) => l.pointId));
+  const shownLogs = logs.filter((l) => (!pointF || l.pointId === pointF) && (!userF || l.userName === userF) && matches(q, l.point.name, l.userName, l.note));
+  const shownPoints = points.filter((p) => (!activeF || (activeF === 'on' ? p.active : !p.active)) && matches(q, p.name, p.location));
   return (
     <Page title="巡邏打卡" actions={canWrite && tab === 'points' && <button className="btn-primary" onClick={() => setEdit({})}><Plus className="w-4 h-4" />新增巡邏點</button>}>
       <HowTo module="patrol" />
@@ -44,20 +51,35 @@ export default function Patrol() {
               <div className="flex flex-wrap gap-2">{active.map((p) => <span key={p.id} className={done.has(p.id) ? 'badge-ok' : 'badge-mute'}>{done.has(p.id) && <CheckCircle2 className="w-3 h-3 mr-0.5" />}{p.name}（{logs.filter((l) => l.pointId === p.id).length}）</span>)}</div>
             </div>
           )}
-          {!logs.length ? <Empty>{points.length ? '這天沒有巡邏紀錄' : '請先到「巡邏點與 QR Code」新增巡邏點並列印貼上'}</Empty> : (
+          <Toolbar count={`顯示 ${shownLogs.length} / ${logs.length} 筆`}>
+            <SearchBox value={q} onChange={setQ} placeholder="搜尋巡邏點、人員、備註" />
+            <Filter value={pointF} onChange={setPointF} all="全部巡邏點" options={points.map((p) => [p.id, p.name])} />
+            <Filter value={userF} onChange={setUserF} all="全部人員" options={[...new Set(logs.map((l) => l.userName))].map((u) => [u, u])} />
+          </Toolbar>
+          {!shownLogs.length ? <Empty>{logs.length ? '沒有符合條件的紀錄' : points.length ? '這天沒有巡邏紀錄' : '請先到「巡邏點與 QR Code」新增巡邏點並列印貼上'}</Empty> : (
             <div className="card p-0 overflow-x-auto"><table className="tbl">
-              <thead><tr><th>時間</th><th>巡邏點</th><th>人員</th><th>備註</th></tr></thead>
-              <tbody>{logs.map((l) => <tr key={l.id}><td className="whitespace-nowrap">{dt(l.scannedAt)}</td><td>{l.point.name}</td><td>{l.userName}</td><td className="text-xs text-gray-500">{l.note}</td></tr>)}</tbody>
+              <thead><tr><th>時間</th><th>巡邏點</th><th>人員</th><th>備註</th><th /></tr></thead>
+              <tbody>{shownLogs.map((l) => (
+                <tr key={l.id}><td className="whitespace-nowrap">{dt(l.scannedAt)}</td><td>{l.point.name}</td><td>{l.userName}</td><td className="text-xs text-gray-500">{l.note}</td>
+                  <td className="text-right whitespace-nowrap">{canWrite && <>
+                    <button className="btn-ghost btn-sm" onClick={() => setNote(l)}>編輯</button>
+                    <button className="btn-ghost btn-sm text-gray-400" onClick={() => confirm('刪除這筆巡邏紀錄？（例如誤掃）') && act(() => api.delete(`/patrol/logs/${l.id}`), '已刪除').then(reload)}><Trash2 className="w-3.5 h-3.5" /></button>
+                  </>}</td></tr>
+              ))}</tbody>
             </table></div>
           )}
         </>
       ) : (
         <>
-          {active.length > 0 && <div className="flex justify-end mb-3"><button className="btn-secondary" onClick={() => setPrint(true)}><Printer className="w-4 h-4" />列印 QR Code</button></div>}
-          {!points.length ? <Empty>還沒有巡邏點</Empty> : (
+          <Toolbar count={`顯示 ${shownPoints.length} / ${points.length} 個`}>
+            <SearchBox value={q} onChange={setQ} placeholder="搜尋巡邏點名稱、位置" />
+            <Filter value={activeF} onChange={setActiveF} all="全部狀態" options={[['on', '使用中'], ['off', '停用']]} />
+            {active.length > 0 && <button className="btn-secondary" onClick={() => setPrint(true)}><Printer className="w-4 h-4" />列印 QR Code</button>}
+          </Toolbar>
+          {!shownPoints.length ? <Empty>{points.length ? '沒有符合條件的巡邏點' : '還沒有巡邏點'}</Empty> : (
             <div className="card p-0 overflow-x-auto"><table className="tbl">
               <thead><tr><th>順序</th><th>巡邏點</th><th>位置</th><th>狀態</th><th /></tr></thead>
-              <tbody>{points.map((p) => (
+              <tbody>{shownPoints.map((p) => (
                 <tr key={p.id} className={p.active ? '' : 'opacity-50'}>
                   <td className="num">{p.seq}</td><td className="font-semibold">{p.name}</td><td className="text-gray-500">{p.location}</td>
                   <td>{p.active ? <span className="badge-ok">使用中</span> : <span className="badge-mute">停用</span>}</td>
@@ -73,6 +95,11 @@ export default function Patrol() {
       )}
       {edit && (
         <PointForm p={edit} onClose={() => setEdit(null)} onSaved={reload} />
+      )}
+      {note && (
+        <FormModal title={`編輯巡邏紀錄：${note.point.name} ${dt(note.scannedAt)}`} onClose={() => setNote(null)} onSubmit={async () => { await api.put(`/patrol/logs/${note.id}`, { note: note.note }); reload(); }}>
+          <Field label="備註" full><input className="input" autoFocus value={note.note} onChange={(e) => setNote({ ...note, note: e.target.value })} /></Field>
+        </FormModal>
       )}
       {print && <PrintCodes points={active} onClose={() => setPrint(false)} />}
     </Page>

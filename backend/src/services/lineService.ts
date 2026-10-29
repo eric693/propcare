@@ -23,6 +23,9 @@ async function push(to: string, text: string): Promise<boolean> {
   }
 }
 
+/** 推給單一 LINE 使用者（測試發送用） */
+export const pushTo = push;
+
 /** 推給一戶所有已綁定 LINE 的住戶，回傳成功人數 */
 export async function notifyUnit(unitId: string, text: string): Promise<number> {
   const rs = await prisma.resident.findMany({ where: { unitId, active: true, lineUserId: { not: null } }, select: { lineUserId: true } });

@@ -1,6 +1,7 @@
 // 法規計算單元測試（不需資料庫）：npx ts-node --transpile-only scripts/law-test.ts
 import { Community } from '@prisma/client';
 import { finalityOf, minutesCheck, motionOf, quorumOf } from '../src/services/meetingService';
+import { checkMacValue, verifyMac } from '../src/services/ecpay';
 
 let fail = 0;
 const check = (label: string, cond: boolean, detail: unknown = '') => { console.log(`${cond ? '✓' : '✗'} ${label}${cond ? '' : ' → ' + JSON.stringify(detail)}`); if (!cond) fail++; };
@@ -50,6 +51,13 @@ const held = { kind: 'OWNERS' as const, status: 'HELD' as const, reconvene: fals
 check('會後 15 日內須送達會議紀錄', minutesCheck(held, '2026-10-10')?.deadline === '2026-10-16' && minutesCheck(held, '2026-10-10')?.ok === false);
 check('準時送達 → 符合', minutesCheck({ ...held, minutesSentDate: d('2026-10-15') })?.ok === true);
 check('逾期送達 → 標示逾期', minutesCheck({ ...held, minutesSentDate: d('2026-10-20') })?.ok === false);
+
+// 綠界檢查碼：官方文件範例（https://developers.ecpay.com.tw/2902/）
+const ex = { ChoosePayment: 'ALL', EncryptType: 1, ItemName: 'Apple iphone 15', MerchantID: '3002607', MerchantTradeDate: '2023/03/12 15:30:23', MerchantTradeNo: 'ecpay20230312153023', PaymentType: 'aio', ReturnURL: 'https://www.ecpay.com.tw/receive.php', TotalAmount: 30000, TradeDesc: '促銷方案' };
+const mac = checkMacValue(ex, 'pwFHCqoQZGmho4w6', 'EkRm7iFT261dpevs');
+check('綠界檢查碼與官方範例一致', mac === '6C51C9E6888DE861FD62FB1DD17029FC742634498FD813DC43D4243B5685B840', mac);
+const signed = Object.fromEntries(Object.entries({ ...ex, CheckMacValue: mac }).map(([k, v]) => [k, String(v)]));
+check('驗證通知檢查碼：正確通過、竄改金額失敗', verifyMac(signed, { hashKey: 'pwFHCqoQZGmho4w6', hashIV: 'EkRm7iFT261dpevs' }) && !verifyMac({ ...signed, TotalAmount: '1' }, { hashKey: 'pwFHCqoQZGmho4w6', hashIV: 'EkRm7iFT261dpevs' }));
 
 console.log(fail ? `\n${fail} 項失敗` : '\n全部通過');
 process.exit(fail ? 1 : 0);

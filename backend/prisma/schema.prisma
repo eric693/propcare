@@ -77,35 +77,42 @@ model Community {
   // 虛擬帳號（銀行核發的前綴；每戶帳號＝前綴＋戶別序號）
   vaBank             String   @default("")
   vaPrefix           String   @default("")
+  // 綠界線上繳費（信用卡、超商代碼、超商條碼、ATM）；金鑰只存後端，不回傳前端
+  onlinePay          Boolean  @default(false)
+  ecpayMerchantId    String   @default("")
+  ecpayHashKey       String   @default("")
+  ecpayHashIV        String   @default("")
+  ecpayStage         Boolean  @default(true) // true＝綠界測試環境
   note               String   @default("")
   active             Boolean  @default(true)
   createdAt          DateTime @default(now())
 
-  users         UserCommunity[]
-  units         Unit[]
-  residents     Resident[]
-  parkingSpaces ParkingSpace[]
-  bills         FeeBill[]
-  payments      FeePayment[]
-  ledger        LedgerEntry[]
-  packages      Package[]
-  facilities    Facility[]
-  bookings      Booking[]
-  repairs       Repair[]
-  announcements Announcement[]
-  vendors       Vendor[]
-  contracts     Contract[]
-  inspections   Inspection[]
-  meetings      Meeting[]
-  dunnings      Dunning[]
-  visitors      Visitor[]
-  feedbacks     Feedback[]
-  documents     Document[]
-  polls         Poll[]
-  assets        Asset[]
-  patrolPoints  PatrolPoint[]
-  patrolLogs    PatrolLog[]
-  bankTxns      BankTxn[]
+  users          UserCommunity[]
+  units          Unit[]
+  residents      Resident[]
+  parkingSpaces  ParkingSpace[]
+  bills          FeeBill[]
+  payments       FeePayment[]
+  ledger         LedgerEntry[]
+  packages       Package[]
+  facilities     Facility[]
+  bookings       Booking[]
+  repairs        Repair[]
+  announcements  Announcement[]
+  vendors        Vendor[]
+  contracts      Contract[]
+  inspections    Inspection[]
+  meetings       Meeting[]
+  dunnings       Dunning[]
+  visitors       Visitor[]
+  feedbacks      Feedback[]
+  documents      Document[]
+  polls          Poll[]
+  assets         Asset[]
+  patrolPoints   PatrolPoint[]
+  patrolLogs     PatrolLog[]
+  bankTxns       BankTxn[]
+  onlinePayments OnlinePayment[]
 }
 
 enum Occupancy {
@@ -133,20 +140,21 @@ model Unit {
   active      Boolean   @default(true)
   community   Community @relation(fields: [communityId], references: [id])
 
-  residents     Resident[]
-  parkingSpaces ParkingSpace[]
-  bills         FeeBill[]
-  payments      FeePayment[]
-  packages      Package[]
-  bookings      Booking[]
-  repairs       Repair[]
-  attendance    MeetingAttendance[]
-  votes         MotionVote[]
-  objections    MotionObjection[]
-  dunnings      Dunning[]
-  visitors      Visitor[]
-  feedbacks     Feedback[]
-  pollVotes     PollVote[]
+  residents      Resident[]
+  parkingSpaces  ParkingSpace[]
+  bills          FeeBill[]
+  payments       FeePayment[]
+  packages       Package[]
+  bookings       Booking[]
+  repairs        Repair[]
+  attendance     MeetingAttendance[]
+  votes          MotionVote[]
+  objections     MotionObjection[]
+  dunnings       Dunning[]
+  visitors       Visitor[]
+  feedbacks      Feedback[]
+  pollVotes      PollVote[]
+  onlinePayments OnlinePayment[]
 
   @@unique([communityId, label])
   @@index([communityId])
@@ -243,6 +251,7 @@ enum PayMethod {
   TRANSFER
   ATM
   STORE
+  CARD
   OTHER
 }
 
@@ -817,4 +826,35 @@ model BankTxn {
   community   Community @relation(fields: [communityId], references: [id])
 
   @@unique([communityId, hash])
+}
+
+// ── 線上繳費訂單（綠界）：付款通知驗證檢查碼後，整戶由最舊帳單沖銷 ──────
+enum OnlinePayStatus {
+  PENDING
+  PAID
+  FAILED
+  MISMATCH // 已付款但無法自動沖銷（金額超過欠費等），需人工處理
+}
+
+model OnlinePayment {
+  id           String          @id @default(cuid())
+  communityId  String
+  unitId       String
+  residentId   String?
+  tradeNo      String          @unique // 送給綠界的 MerchantTradeNo（20 碼內）
+  method       String // Credit／CVS／BARCODE／ATM
+  amount       Int
+  periods      String          @default("")
+  status       OnlinePayStatus @default(PENDING)
+  ecpayTradeNo String          @default("")
+  paymentType  String          @default("")
+  rtnMsg       String          @default("")
+  payInfo      String          @default("") // 超商代碼／條碼／ATM 虛擬帳號與繳費期限（取號後）
+  paidAt       DateTime?
+  receiptNos   String          @default("")
+  createdAt    DateTime        @default(now())
+  community    Community       @relation(fields: [communityId], references: [id])
+  unit         Unit            @relation(fields: [unitId], references: [id])
+
+  @@index([communityId, createdAt])
 }

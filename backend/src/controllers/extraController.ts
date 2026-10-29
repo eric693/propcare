@@ -8,7 +8,8 @@ import { AuthRequest, communityIdsOf } from '../middleware/auth';
 import { ResidentRequest } from '../middleware/residentAuth';
 import { audit } from '../services/common';
 import { HttpError } from '../services/feeService';
-import { notifyStaff, notifyUnit } from '../services/lineService';
+import { notifyStaff, notifyUnit, pushTo } from '../services/lineService';
+import { config } from '../config';
 import { addDays, dateStr, toDate, todayStr } from '../utils/dates';
 import { parse, zDate } from '../utils/validate';
 import { payUnitOldestFirst } from './feeController';
@@ -120,8 +121,24 @@ export async function listFeedback(req: AuthRequest, res: Response) {
   }));
 }
 
+/** 管理端代為登錄（住戶電話或臨櫃反映） */
+export async function createFeedback(req: AuthRequest, res: Response) {
+  const b = parse(z.object({
+    unitId: z.string().min(1, '請選擇戶別'), category: z.enum(FEEDBACK_CATEGORIES as [string, ...string[]]).default('建議'),
+    title: z.string().trim().min(1, '請填寫主旨').max(100), content: z.string().trim().max(3000).default(''),
+  }), req.body);
+  await ownUnit(req.cid!, b.unitId);
+  const f = await prisma.feedback.create({ data: { ...b, communityId: req.cid! } });
+  await audit(req.cid, actor(req), '登錄住戶意見', b.title);
+  res.status(201).json(f);
+}
+
 export async function replyFeedback(req: AuthRequest, res: Response) {
-  const b = parse(z.object({ reply: z.string().trim().max(2000).default(''), status: z.enum(['OPEN', 'REPLIED', 'CLOSED']) }), req.body);
+  const b = parse(z.object({
+    reply: z.string().trim().max(2000).default(''), status: z.enum(['OPEN', 'REPLIED', 'CLOSED']),
+    category: z.enum(FEEDBACK_CATEGORIES as [string, ...string[]]).optional(), title: z.string().trim().min(1, '請填寫主旨').max(100).optional(),
+    content: z.string().trim().max(3000).optional(),
+  }), req.body);
   const f = await prisma.feedback.findFirst({ where: { id: req.params.id, communityId: req.cid! } });
   if (!f) throw new HttpError(404, '找不到意見');
   const replied = b.reply && b.reply !== f.reply;
@@ -153,6 +170,17 @@ export async function residentCreateFeedback(req: ResidentRequest, res: Response
   await notifyStaff(req.cid!, `【${req.community!.name}】住戶意見（${b.category}）\n${r.unit.label}：${b.title}`);
   await audit(req.cid, { type: 'resident', id: r.id, name: r.name }, '住戶提出意見', b.title);
   res.status(201).json(f);
+}
+
+export async function residentUpdateFeedback(req: ResidentRequest, res: Response) {
+  const b = parse(z.object({
+    category: z.enum(FEEDBACK_CATEGORIES as [string, ...string[]]).default('建議'),
+    title: z.string().trim().min(1, '請填寫主旨').max(100), content: z.string().trim().max(3000).default(''),
+  }), req.body);
+  const f = await prisma.feedback.findFirst({ where: { id: req.params.id, residentId: req.resident!.id, status: 'OPEN', reply: '' } });
+  if (!f) throw new HttpError(400, '只能修改自己送出、尚未回覆的意見');
+  await prisma.feedback.update({ where: { id: f.id }, data: b });
+  res.json({ ok: true });
 }
 
 export async function residentDeleteFeedback(req: ResidentRequest, res: Response) {
@@ -365,6 +393,23 @@ export async function deletePatrolPoint(req: AuthRequest, res: Response) {
   res.json({ ok: true, deactivated: p._count.logs > 0 });
 }
 
+/** 刪除誤掃的巡邏紀錄（留稽核紀錄） */
+export async function deletePatrolLog(req: AuthRequest, res: Response) {
+  const l = await prisma.patrolLog.findFirst({ where: { id: req.params.id, communityId: req.cid! }, include: { point: { select: { name: true } } } });
+  if (!l) throw new HttpError(404, '找不到巡邏紀錄');
+  await prisma.patrolLog.delete({ where: { id: l.id } });
+  await audit(req.cid, actor(req), '刪除巡邏紀錄', `${l.point.name} ${l.userName} ${l.scannedAt.toISOString()}`);
+  res.json({ ok: true });
+}
+
+export async function updatePatrolLog(req: AuthRequest, res: Response) {
+  const b = parse(z.object({ note: z.string().trim().max(200).default('') }), req.body);
+  const l = await prisma.patrolLog.findFirst({ where: { id: req.params.id, communityId: req.cid! } });
+  if (!l) throw new HttpError(404, '找不到巡邏紀錄');
+  await prisma.patrolLog.update({ where: { id: l.id }, data: b });
+  res.json({ ok: true });
+}
+
 /** 掃描巡邏點 QR Code 打卡：巡邏點須屬於登入者可管理的社區（不需先選社區） */
 export async function patrolScan(req: AuthRequest, res: Response) {
   const b = parse(z.object({ code: z.string().trim().min(1).max(40), note: z.string().trim().max(200).default('') }), req.body);
@@ -415,22 +460,40 @@ export async function bankPreview(req: AuthRequest, res: Response) {
   const byVa = new Map(units.filter((u) => u.vaCode).map((u) => [u.vaCode, u]));
   const owedRows = await prisma.feeBill.groupBy({ by: ['unitId'], where: { communityId: req.cid!, status: { in: ['UNPAID', 'PARTIAL'] } }, _sum: { total: true, paid: true } });
   const owed = new Map(owedRows.map((r) => [r.unitId, (r._sum.total ?? 0) - (r._sum.paid ?? 0)]));
-  const lines = text.replace(/^﻿/, '').split(/\r?\n/);
-  const header = splitCells(lines[0] ?? '');
-  const col = (re: RegExp) => header.findIndex((h) => re.test(h));
-  const hDate = col(/日期|交易日|入帳日/), hAmt = col(/存入|入帳金額|金額|收入/), hAcct = col(/虛擬帳號|帳號|銷帳編號|繳款編號/), hMemo = col(/備註|摘要|附言|說明/);
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+  // 標題列：網銀檔案前面常有「帳號、查詢期間」等說明列，取前 20 行中同時有日期與金額欄的那一行
+  const hIdx = lines.slice(0, 20).findIndex((l) => /日期/.test(l) && /存入|存款|入帳|金額|收入/.test(l));
+  const header = hIdx >= 0 ? splitCells(lines[hIdx]) : [];
+  const col = (...res: RegExp[]) => { for (const re of res) { const i = header.findIndex((h) => re.test(h)); if (i >= 0) return i; } return -1; };
+  const hDate = col(/入帳日|交易日|日期/);
+  // 有「支出／提款」與「存入」兩欄時一定取存入欄
+  const hAmt = col(/存入|存款金額|存款|入帳金額|收入/, /^(?!.*(支出|提款|支取|餘額)).*金額/);
+  const hAcct = col(/虛擬帳號|銷帳編號|繳款編號|銷帳/, /帳號/);
+  const hMemo = col(/備註|附言/, /摘要|說明|交易內容/);
   const useHeader = hDate >= 0 && hAmt >= 0;
+  const money = (c: string) => Math.round(Number(c.replace(/[^\d.-]/g, '')) || 0);
+  const vaOf = (cands: string[]) => {
+    for (const c of cands) {
+      for (const m of c.replace(/[\s-]/g, '').match(/\d{10,16}/g) ?? []) {
+        const u = byVa.get(m) ?? units.find((x) => x.vaCode && m.endsWith(x.vaCode));
+        if (u) return { account: m, unit: u };
+      }
+    }
+    return null;
+  };
   const seen = new Map<string, number>();
   const rows: BankRow[] = [];
   lines.forEach((raw, i) => {
-    if (!raw.trim() || (useHeader && i === 0)) return;
+    if (!raw.trim() || (useHeader && i <= hIdx)) return;
     const cells = splitCells(raw);
     let date = '', amount = 0, account = '', memo = '';
     if (useHeader) {
       date = parseBankDate(cells[hDate] ?? '');
-      amount = Math.round(Number((cells[hAmt] ?? '').replace(/,/g, '')) || 0);
+      amount = money(cells[hAmt] ?? '');
       account = hAcct >= 0 ? (cells[hAcct] ?? '').replace(/\D/g, '') : '';
       memo = hMemo >= 0 ? cells[hMemo] ?? '' : '';
+      if (!date && (!amount || /小計|合計|總計/.test(raw))) return;   // 小計、說明列
+      if (amount <= 0) return;               // 支出或沒有存入的列不是繳費
     } else {
       // 沒有標題列：取第一個像日期的欄位、10 碼以上的數字為帳號、其餘第一個正數為金額
       for (const c of cells) {
@@ -442,8 +505,10 @@ export async function bankPreview(req: AuthRequest, res: Response) {
         if (c && !memo) memo = c;
       }
     }
-    if (!account) account = (memo.match(/\d{10,16}/) ?? [''])[0];
-    const unit = byVa.get(account) ?? units.find((u) => u.vaCode && account.endsWith(u.vaCode)) ?? null;
+    // 帳號欄可能是匯款人帳號，虛擬帳號寫在備註：整列都找一遍
+    const hit = vaOf([account, memo, ...cells]);
+    if (hit) account = hit.account;
+    const unit = hit?.unit ?? null;
     const key = `${date}|${amount}|${account}|${memo}`;
     const n = (seen.get(key) ?? 0) + 1; seen.set(key, n);
     const hash = crypto.createHash('sha1').update(`${key}|${n}`).digest('hex');
@@ -490,5 +555,24 @@ export async function logExport(req: AuthRequest, res: Response) {
 
 export async function residentPrivacy(req: ResidentRequest, res: Response) {
   await prisma.resident.update({ where: { id: req.resident!.id }, data: { privacyAt: new Date() } });
+  res.json({ ok: true });
+}
+
+// ── LINE 通知狀態與測試 ───────────────────────────────────────────────
+
+export async function lineStatus(req: AuthRequest, res: Response) {
+  const [residents, bound, staffBound] = await Promise.all([
+    prisma.resident.count({ where: { communityId: req.cid!, active: true } }),
+    prisma.resident.count({ where: { communityId: req.cid!, active: true, lineUserId: { not: null } } }),
+    prisma.user.count({ where: { active: true, lineUserId: { not: null }, OR: [{ role: 'ADMIN' }, { communities: { some: { communityId: req.cid! } } }] } }),
+  ]);
+  res.json({ enabled: config.line.enabled, webhookUrl: `${config.appUrl.replace(/\/$/, '')}/api/line/webhook`, residents, bound, staffBound, meBound: Boolean(req.user!.lineUserId) });
+}
+
+export async function lineTest(req: AuthRequest, res: Response) {
+  if (!config.line.enabled) throw new HttpError(400, '尚未設定 LINE 官方帳號憑證（LINE_CHANNEL_SECRET、LINE_CHANNEL_ACCESS_TOKEN）');
+  if (!req.user!.lineUserId) throw new HttpError(400, '您的帳號尚未綁定 LINE，請先到「我的帳號」綁定');
+  const ok = await pushTo(req.user!.lineUserId, `【PropCare】測試訊息：${req.community!.name} 的 LINE 通知運作正常。`);
+  if (!ok) throw new HttpError(502, 'LINE 發送失敗，請確認 Channel access token 是否正確');
   res.json({ ok: true });
 }

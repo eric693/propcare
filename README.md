@@ -37,6 +37,10 @@
 - 訪客登記（在場名單、來訪紀錄）、寄放物品（包裹類型 `DEPOSIT`，取件碼通知寄放戶）
 - 巡邏打卡：巡邏點 QR Code（`/patrol/scan/:code`），員工掃描登入即打卡
 - 住戶意見反映與回覆、社區文件（上傳存 `backend/uploads/<社區>`，住戶可閱覽者標記公開）、住戶意見調查（一戶一票，非區權會法定表決）、財產清冊
+- 線上繳費（綠界 ECPay，`services/ecpay.ts`、`controllers/payController.ts`）：住戶專區選信用卡／超商代碼／超商條碼／ATM，金額為全部未繳；綠界通知 `/api/pay/ecpay/notify` 驗證檢查碼後整戶沖銷（重送只入帳一次，金額不符標為需人工處理）。社區設定開通；測試環境未填金鑰時用綠界公開測試特店。金鑰不回傳前端。實測：`node scripts/ecpay-e2e.mjs <playwright 路徑> <截圖資料夾>`（`STEP=card` 用測試卡完成付款）
+  - nginx 的 CSP 須允許表單送到綠界：`form-action 'self' https://payment-stage.ecpay.com.tw https://payment.ecpay.com.tw`
+- LINE：社區設定顯示連線狀態、綁定人數、Webhook 網址與申請步驟；可發測試訊息給自己
+- 銀行明細：可上傳 Excel（.xls/.xlsx，前端 SheetJS 轉 CSV）或 CSV；自動找標題列、取「存入」欄、略過支出與小計，虛擬帳號在帳號或備註欄皆可比對
 - 個資：住戶首次登入須確認個資告知（`/privacy`，個資法第 8 條）；匯出 Excel（CSV＋BOM）會寫入稽核紀錄
 - 排程（`jobs/scheduler.ts`，台北時間）：08:00 自動開帳與繳費提醒；09:00 包裹逾期提醒、週一到期事項彙整給員工
 

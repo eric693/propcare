@@ -28,6 +28,8 @@ if (config.line.enabled) {
 
 // 文件上傳（base64）放寬到 15 MB，其餘 API 維持 2 MB
 app.use('/api/documents', express.json({ limit: '15mb' }));
+// 綠界通知為表單格式（application/x-www-form-urlencoded）
+app.use('/api/pay', express.urlencoded({ extended: false, limit: '100kb' }));
 app.use(express.json({ limit: '2mb' }));
 app.use('/api', routes);
 app.get('/health', (_req, res) => res.json({ ok: true }));

@@ -51,6 +51,7 @@ async function cleanup() {
     await prisma.meeting.deleteMany({ where: { communityId: id } });
     await prisma.poll.deleteMany({ where: { communityId: id } });
     await prisma.patrolLog.deleteMany({ where: { communityId: id } });
+    await prisma.onlinePayment.deleteMany({ where: { communityId: id } });
     for (const m of ['patrolPoint', 'bankTxn', 'dunning', 'visitor', 'feedback', 'document', 'asset']) await prisma[m].deleteMany({ where: { communityId: id } });
     fs.rmSync(new URL(`../uploads/${id}`, import.meta.url), { recursive: true, force: true });
     for (const m of ['ledgerEntry', 'feePayment', 'feeBill', 'package', 'booking', 'facility', 'repair', 'announcement', 'inspection', 'contract', 'vendor', 'parkingSpace', 'resident', 'unit', 'userCommunity', 'auditLog']) {
@@ -354,6 +355,73 @@ async function main() {
   await call('POST', '/export-log', { token: M, cid, body: { what: '戶別住戶', rows: 4 } });
   const logs = await call('GET', '/audit', { token: M, cid });
   check('匯出留下稽核紀錄', JSON.stringify(logs).includes('匯出資料'), JSON.stringify(logs).slice(0, 200));
+
+  // ── 補齊的新增／編輯／刪除 ──
+  const sfb = await call('POST', '/feedback', { token: M, cid, body: { unitId: U['A 2F-2'], category: '停車', title: '電話反映：車位被占' } });
+  await call('PUT', `/feedback/${sfb.id}`, { token: M, cid, body: { category: '停車', title: '電話反映：B1 車位被占', content: '下午三點來電', reply: '', status: 'OPEN' } });
+  check('管理端登錄並編輯意見', (await call('GET', '/feedback', { token: M, cid })).some((f) => f.id === sfb.id && f.title === '電話反映：B1 車位被占' && !f.residentId));
+  await call('DELETE', `/feedback/${sfb.id}`, { token: M, cid });
+  const fb2 = await call('POST', '/resident/feedback', { token: R, body: { title: '待修改' } });
+  await call('PUT', `/resident/feedback/${fb2.id}`, { token: R, body: { category: '環境清潔', title: '垃圾間異味', content: '' } });
+  check('住戶修改未回覆的意見', (await call('GET', '/resident/feedback', { token: R })).some((f) => f.id === fb2.id && f.title === '垃圾間異味'));
+  await call('PUT', `/resident/feedback/${fb.id}`, { token: R, body: { title: 'x' }, expect: [400], label: '/resident/feedback/:id（已回覆不能修改）' });
+  await call('POST', '/patrol/points', { token: M, cid, body: { name: '頂樓', seq: 2 } });
+  const pt2 = (await call('GET', '/patrol', { token: M, cid })).points.find((p) => p.name === '頂樓');
+  await call('POST', '/patrol/scan', { token: M, body: { code: pt2.code } });
+  const log2 = (await call('GET', '/patrol', { token: M, cid })).logs.find((l) => l.pointId === pt2.id);
+  await call('PUT', `/patrol/logs/${log2.id}`, { token: M, cid, body: { note: '水塔蓋已關' } });
+  check('編輯巡邏紀錄備註', (await call('GET', '/patrol', { token: M, cid })).logs.find((l) => l.id === log2.id)?.note === '水塔蓋已關');
+  await call('DELETE', `/patrol/logs/${log2.id}`, { token: M, cid });
+  check('刪除誤掃的巡邏紀錄', !(await call('GET', '/patrol', { token: M, cid })).logs.some((l) => l.id === log2.id));
+
+  // ── 銀行明細：國泰型（支出／存入兩欄、轉出帳號）、前面有說明列、虛擬帳號在備註 ──
+  const cathay = `帳號：0123-456-789012\n查詢期間：${today} ~ ${today}\n交易日期,交易時間,摘要,支出金額,存入金額,餘額,轉出入帳號,備註\n${today.replace(/-/g, '/')},10:22,跨行轉入,,"2,300.00","1,000,000",00812345678901,繳費 ${va['A 2F-2']}\n${today.replace(/-/g, '/')},11:00,手續費,15,,"999,985",,\n小計,,,15,"2,300",,,`;
+  const pv3 = await call('POST', '/bank/preview', { token: M, cid, body: { text: cathay } });
+  check('國泰型明細：取存入欄、略過支出與小計、從備註比對虛擬帳號', pv3.rows?.length === 1 && pv3.rows[0].amount === 2300 && pv3.rows[0].unitLabel === 'A 2F-2' && pv3.rows[0].account === va['A 2F-2'], JSON.stringify(pv3.rows));
+  const esun = `交易日期\t帳務日期\t交易說明\t提款\t存款\t餘額\t虛擬帳號\n${today}\t${today}\tATM 轉帳\t\t500\t100500\t${va['A 1F-2']}`;
+  const pv4 = await call('POST', '/bank/preview', { token: M, cid, body: { text: esun } });
+  check('玉山型明細（Tab 分隔、提款／存款欄）', pv4.rows?.length === 1 && pv4.rows[0].amount === 500 && pv4.rows[0].unitLabel === 'A 1F-2', JSON.stringify(pv4.rows));
+
+  // ── 線上繳費（綠界測試環境；以測試金鑰模擬綠界通知）──
+  const comm0 = await call('GET', '/community', { token: M, cid });
+  check('社區資料不回傳金流金鑰', !('ecpayHashKey' in comm0) && !('ecpayHashIV' in comm0) && comm0.ecpayKeySet === false, Object.keys(comm0).join(','));
+  let pi = await call('GET', '/resident/pay', { token: R });
+  check('未開通時住戶看不到線上繳費', pi.enabled === false);
+  await call('POST', '/resident/pay', { token: R, body: { method: 'Credit' }, expect: [400], label: '/resident/pay（未開通）' });
+  await call('PUT', '/community', { token: A, cid, body: { onlinePay: true, ecpayStage: false }, expect: [400], label: '/community（正式環境未填金鑰）' });
+  await call('PUT', '/community', { token: A, cid, body: { onlinePay: true, ecpayStage: true } });
+  pi = await call('GET', '/resident/pay', { token: R });
+  check('開通後住戶看到欠費與付款方式', pi.enabled === true && pi.amount > 0 && pi.methods.Credit === '信用卡', JSON.stringify(pi));
+  const order = await call('POST', '/resident/pay', { token: R, body: { method: 'Credit' } });
+  check('建立綠界訂單（測試環境網址、含檢查碼）', order.action?.includes('payment-stage.ecpay.com.tw') && order.fields?.TotalAmount === pi.amount && /^[0-9A-F]{64}$/.test(order.fields.CheckMacValue), JSON.stringify(order).slice(0, 200));
+  const crypto = await import('crypto');
+  const mac = (p) => {
+    const body = Object.keys(p).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())).map((k) => `${k}=${p[k]}`).join('&');
+    const enc = encodeURIComponent(`HashKey=pwFHCqoQZGmho4w6&${body}&HashIV=EkRm7iFT261dpevs`).replace(/%20/g, '+').replace(/~/g, '%7e').replace(/'/g, '%27').toLowerCase();
+    return crypto.createHash('sha256').update(enc).digest('hex').toUpperCase();
+  };
+  const notify = async (p) => { const r = await fetch(`${API}/pay/ecpay/notify`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(p).toString() }); return r.text(); };
+  const base = { MerchantID: '3002607', MerchantTradeNo: order.fields.MerchantTradeNo, StoreID: '', RtnCode: '1', RtnMsg: '交易成功', TradeNo: '2510291234567890', TradeAmt: String(pi.amount), PaymentDate: `${today.replace(/-/g, '/')} 12:00:00`, PaymentType: 'Credit_CreditCard', PaymentTypeChargeFee: '30', TradeDate: `${today.replace(/-/g, '/')} 11:59:00`, SimulatePaid: '0' };
+  const forged = { ...base, TradeAmt: '1' }; forged.CheckMacValue = mac(base);
+  check('檢查碼不符的通知被拒絕', (await notify(forged)) !== '1|OK');
+  const good = { ...base, CheckMacValue: mac(base) };
+  check('付款通知回覆 1|OK', (await notify(good)) === '1|OK');
+  check('重送同一通知仍回 1|OK', (await notify(good)) === '1|OK');
+  const after = await call('GET', '/resident/pay', { token: R });
+  check('線上付款後自動銷帳', after.amount === 0, JSON.stringify(after));
+  const ops = await call('GET', '/online-payments', { token: M, cid });
+  const op = ops.find((o) => o.tradeNo === order.fields.MerchantTradeNo);
+  check('線上繳費紀錄已入帳且只入帳一次', op?.status === 'PAID' && op.receiptNos.split(',').length >= 1, JSON.stringify(op));
+  const todayPays = await call('GET', `/payments?from=${today}&to=${today}`, { token: M, cid });
+  check('收款紀錄為信用卡、不重複', todayPays.filter((p) => p.note.includes('2510291234567890') && !p.voided).length === op.receiptNos.split(',').length && todayPays.some((p) => p.method === 'CARD'), JSON.stringify(todayPays.map((p) => [p.method, p.note])));
+  await call('DELETE', `/online-payments/${op.id}`, { token: M, cid, expect: [400], label: '/online-payments/:id（已付款不能刪）' });
+  await call('POST', '/resident/pay', { token: R, body: { method: 'ATM' }, expect: [400], label: '/resident/pay（沒有欠費）' });
+  await call('PUT', '/community', { token: A, cid, body: { onlinePay: false } });
+
+  // ── LINE 狀態 ──
+  const ls = await call('GET', '/line/status', { token: M, cid });
+  check('LINE 狀態：顯示 webhook 網址與綁定人數', typeof ls.enabled === 'boolean' && ls.webhookUrl.endsWith('/api/line/webhook') && ls.residents >= 1, JSON.stringify(ls));
+  if (!ls.enabled) await call('POST', '/line/test', { token: M, cid, expect: [400], label: '/line/test（未設定憑證時說明原因）' });
 
 }
 

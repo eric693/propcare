@@ -15,6 +15,36 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   return <div className="card mb-4"><h3 className="font-semibold mb-3">{title}</h3><div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">{children}</div></div>;
 }
 
+/** LINE 官方帳號：連線狀態、綁定人數、測試發送與申請步驟 */
+function LineSection() {
+  const { cid } = useAuth();
+  const { data: s } = useLoad(() => api.get<any>('/line/status').then((r) => r.data), [cid]);
+  const [busy, setBusy] = useState(false);
+  if (!s) return null;
+  return (
+    <div className="card mb-4">
+      <div className="flex items-center gap-2 mb-2"><h3 className="font-semibold text-sm">LINE 通知</h3>
+        {s.enabled ? <span className="badge-ok">已連線</span> : <span className="badge-warn">尚未設定</span>}
+        {s.enabled && <button className="btn-secondary btn-sm ml-auto" disabled={busy || !s.meBound} title={s.meBound ? '' : '請先在「我的帳號」綁定 LINE'} onClick={async () => { setBusy(true); await act(() => api.post('/line/test'), '已發送測試訊息到您的 LINE'); setBusy(false); }}>發送測試訊息給我</button>}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm mb-3">
+        <div><div className="text-xs text-gray-500">住戶綁定</div><b>{s.bound}</b> / {s.residents} 人</div>
+        <div><div className="text-xs text-gray-500">員工綁定</div><b>{s.staffBound}</b> 人</div>
+        <div className="col-span-2 sm:col-span-1"><div className="text-xs text-gray-500">Webhook 網址</div><code className="text-xs break-all">{s.webhookUrl}</code></div>
+      </div>
+      {!s.enabled && (
+        <ol className="list-decimal pl-5 text-xs text-gray-600 space-y-1">
+          <li>到 LINE Official Account Manager 申請官方帳號（免費方案每月 200 則推播，量大再升級）。</li>
+          <li>在 LINE Developers 建立 Messaging API channel，取得 Channel secret 與 Channel access token（long-lived）。</li>
+          <li>Webhook URL 填上方網址並開啟「Use webhook」，關閉「自動回應訊息」。</li>
+          <li>請系統管理員把兩個值填入主機的 <code>backend/.env</code>（LINE_CHANNEL_SECRET、LINE_CHANNEL_ACCESS_TOKEN）並重啟，這裡就會顯示「已連線」。</li>
+          <li>住戶在住戶專區「我的帳號」、員工在「我的帳號」取得 6 碼綁定碼，傳給官方帳號即完成綁定。</li>
+        </ol>
+      )}
+    </div>
+  );
+}
+
 /** 社區設定：物業公司管理員可編輯；其他人唯讀 */
 export function CommunitySettings() {
   const { cid, user, refresh } = useAuth();
@@ -31,7 +61,7 @@ export function CommunitySettings() {
   async function save() {
     setBusy(true);
     try {
-      const { id, createdAt, active, ...rest } = f;
+      const { id, createdAt, active, ecpayKeySet, ...rest } = f;
       await api.put('/community', { ...rest, quorumAttend: f.quorumAttend / 100, quorumPass: f.quorumPass / 100, quorumReAttend: f.quorumReAttend / 100, quorumRePass: f.quorumRePass / 100 });
       await refresh(); toast('已儲存');
     } catch (e: any) { toast(e.response?.data?.error ?? '儲存失敗', true); }
@@ -57,6 +87,16 @@ export function CommunitySettings() {
         <Field label="虛擬帳號銀行" hint="例如：玉山銀行 808">{inp('vaBank')}</Field>
         <Field label="虛擬帳號前綴（銀行核發，3～10 位數字）" hint="設定後每戶自動產生 14 碼專屬繳費帳號，可匯入入帳明細自動銷帳">{inp('vaPrefix')}</Field>
       </Section>
+      <Section title="線上繳費（綠界 ECPay：信用卡、超商代碼、超商條碼、ATM）">
+        <Field label="住戶線上繳費" full><label className="flex items-center gap-2 text-sm"><input type="checkbox" disabled={!isAdmin} checked={!!f.onlinePay} onChange={(e) => setF({ ...f, onlinePay: e.target.checked })} />開放住戶在手機上線上繳管理費（付款成功自動銷帳、開收據）</label></Field>
+        <Field label="環境" full><label className="flex items-center gap-2 text-sm"><input type="checkbox" disabled={!isAdmin} checked={!!f.ecpayStage} onChange={(e) => setF({ ...f, ecpayStage: e.target.checked })} />使用綠界測試環境（不會真的扣款；未填金鑰時使用綠界公開的測試特店）</label></Field>
+        <Field label="綠界特店編號（MerchantID）">{inp('ecpayMerchantId')}</Field>
+        <div />
+        <Field label="HashKey" hint={f.ecpayKeySet ? '已設定；留白表示不變更' : '在綠界廠商後台「系統開發管理 › 系統介接設定」取得'}><input className="input" type="password" autoComplete="new-password" disabled={!isAdmin} placeholder={f.ecpayKeySet ? '••••••（已設定）' : ''} value={f.ecpayHashKey ?? ''} onChange={set('ecpayHashKey')} /></Field>
+        <Field label="HashIV"><input className="input" type="password" autoComplete="new-password" disabled={!isAdmin} placeholder={f.ecpayKeySet ? '••••••（已設定）' : ''} value={f.ecpayHashIV ?? ''} onChange={set('ecpayHashIV')} /></Field>
+        <p className="text-xs text-gray-500 sm:col-span-2">管委會與綠界簽約取得特店編號與金鑰後填入、取消「測試環境」即正式上線。付款通知網址系統會自動帶入，不需在綠界後台另外設定。測試卡號 4311-9522-2222-2222，有效期限填未來月份，簡訊驗證碼 1234。</p>
+      </Section>
+      <LineSection />
       <Section title="欠費催告標準（條例第 21 條）">
         <Field label="欠繳達幾期列為可催告" hint="條文為「已逾二期或達相當金額」；預設欠滿 3 期，可依規約或管委會決議改為 2 期">{inp('arrearsPeriods', 'number')}</Field>
         <Field label="或欠費達多少元（0＝不使用）" hint="「相當金額」建議以規約或區權會決議明訂">{inp('arrearsAmount', 'number')}</Field>
