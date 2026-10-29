@@ -1,23 +1,37 @@
+import { lazy, Suspense } from 'react';
 import type React from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
 import { Loading } from './components/ui';
 import Login from './pages/Login';
-import Intro from './pages/Intro';
-import Overview from './pages/Overview';
-import Dashboard from './pages/Dashboard';
-import Units from './pages/Units';
-import Fees from './pages/Fees';
-import Ledger from './pages/Ledger';
-import Packages from './pages/Packages';
-import Facilities from './pages/Facilities';
-import Repairs from './pages/Repairs';
-import Announcements from './pages/Announcements';
-import Meetings, { MeetingDetail } from './pages/Meetings';
-import Vendors from './pages/Vendors';
-import { Accounts, CommunitySettings, MySettings } from './pages/Admin';
-import { ResidentLayout, ResidentLogin, RBills, RBooking, RHome, RMe, RNews, RRepairs } from './pages/resident/Portal';
+
+// 依頁面分包：住戶手機端與介紹頁不必下載管理端的程式
+const page = <K extends string>(load: () => Promise<Record<K, React.ComponentType>>, name: K) => lazy(() => load().then((m) => ({ default: m[name] })));
+const Intro = page(() => import('./pages/Intro'), 'default');
+const Overview = page(() => import('./pages/Overview'), 'default');
+const Dashboard = page(() => import('./pages/Dashboard'), 'default');
+const Units = page(() => import('./pages/Units'), 'default');
+const Fees = page(() => import('./pages/Fees'), 'default');
+const Ledger = page(() => import('./pages/Ledger'), 'default');
+const Packages = page(() => import('./pages/Packages'), 'default');
+const Facilities = page(() => import('./pages/Facilities'), 'default');
+const Repairs = page(() => import('./pages/Repairs'), 'default');
+const Announcements = page(() => import('./pages/Announcements'), 'default');
+const Meetings = page(() => import('./pages/Meetings'), 'default');
+const MeetingDetail = page(() => import('./pages/Meetings'), 'MeetingDetail');
+const Vendors = page(() => import('./pages/Vendors'), 'default');
+const Accounts = page(() => import('./pages/Admin'), 'Accounts');
+const CommunitySettings = page(() => import('./pages/Admin'), 'CommunitySettings');
+const MySettings = page(() => import('./pages/Admin'), 'MySettings');
+const ResidentLayout = page(() => import('./pages/resident/Portal'), 'ResidentLayout');
+const ResidentLogin = page(() => import('./pages/resident/Portal'), 'ResidentLogin');
+const RBills = page(() => import('./pages/resident/Portal'), 'RBills');
+const RBooking = page(() => import('./pages/resident/Portal'), 'RBooking');
+const RHome = page(() => import('./pages/resident/Portal'), 'RHome');
+const RMe = page(() => import('./pages/resident/Portal'), 'RMe');
+const RNews = page(() => import('./pages/resident/Portal'), 'RNews');
+const RRepairs = page(() => import('./pages/resident/Portal'), 'RRepairs');
 
 function Private({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -29,6 +43,7 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <Suspense fallback={<Loading />}>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/intro" element={<Intro />} />
@@ -60,6 +75,7 @@ export default function App() {
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </BrowserRouter>
     </AuthProvider>
   );

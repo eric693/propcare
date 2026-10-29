@@ -5,6 +5,7 @@ import api from '../api/client';
 import { Page } from '../components/Layout';
 import HowTo from '../components/HowTo';
 import { ErrorBox, Loading, Stat, useLoad } from '../components/ui';
+import { BarChart, ChartCard, PieChart } from '../components/charts';
 import { useAuth } from '../context/AuthContext';
 import { d10, daysFrom, L, money } from '../lib/format';
 
@@ -29,6 +30,7 @@ export default function Dashboard() {
         <Stat label="管理費帳戶餘額" value={money(d.balance.mgmt)} sub="已核准收支" onClick={() => nav('/ledger')} />
         <Stat label="公共基金餘額" value={money(d.balance.reserve)} sub="專戶" onClick={() => nav('/ledger')} />
       </div>
+      {d.charts && <Charts c={d.charts} />}
       <div className="grid lg:grid-cols-2 gap-4">
         <Panel icon={Wrench} title="處理中報修" more={() => nav('/repairs')}>
           {d.repairs.length ? d.repairs.map((r: any) => (
@@ -55,6 +57,27 @@ export default function Dashboard() {
         )}
       </div>
     </Page>
+  );
+}
+
+function Charts({ c }: { c: any }) {
+  const months = c.collection.map((m: any) => `${Number(m.period.slice(5))}月`);
+  const short = (v: number) => (v >= 10000 ? `${Math.round(v / 1000) / 10}萬` : money(v));
+  return (
+    <div className="grid lg:grid-cols-2 gap-4 mb-4">
+      <ChartCard title="近 6 個月管理費收繳率" sub="實收 ÷ 應收（不含作廢帳單）">
+        <BarChart labels={months} series={[{ name: '收繳率', values: c.collection.map((m: any) => m.rate) }]} max={100} format={(v) => `${Math.round(v * 10) / 10}%`} />
+      </ChartCard>
+      <ChartCard title="近 6 個月收入與支出" sub="管理費帳戶＋公共基金，已核准帳目">
+        <BarChart labels={months} series={[{ name: '收入', values: c.cashflow.map((m: any) => m.income) }, { name: '支出', values: c.cashflow.map((m: any) => m.expense) }]} format={short} />
+      </ChartCard>
+      <ChartCard title="今年支出科目" sub="已核准支出，依科目合計（元）">
+        <PieChart items={c.expenseByCategory} format={money} />
+      </ChartCard>
+      <ChartCard title="近 12 個月報修類別" sub="依報修類別統計件數">
+        <PieChart items={c.repairsByCategory} unit=" 件" />
+      </ChartCard>
+    </div>
   );
 }
 

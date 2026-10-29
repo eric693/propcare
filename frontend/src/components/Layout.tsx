@@ -1,10 +1,11 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, Suspense, useEffect, useState } from 'react';
 import {
   Building2, CalendarDays, ClipboardCheck, FileText, Gavel, Home, LayoutDashboard, LogOut, Megaphone, Menu,
   Package, Receipt, Settings, ShieldCheck, Users, Wallet, Wrench, X, MoreHorizontal, Building,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { Loading } from './ui';
 import { L } from '../lib/format';
 
 type Item = { to: string; label: string; icon: typeof Home; admin?: boolean; end?: boolean };
@@ -99,7 +100,7 @@ export default function Layout() {
         <main className="flex-1 overflow-y-auto pb-20 md:pb-0">
           {user && !user.communities.length && loc.pathname !== '/accounts' && loc.pathname !== '/settings' ? (
             <div className="max-w-xl mx-auto p-6"><div className="card text-sm text-gray-500">您的帳號尚未被指派任何社區，請聯絡物業公司管理員。{user.role === 'ADMIN' && <button className="btn-primary mt-3" onClick={() => nav('/overview')}>新增第一個社區</button>}</div></div>
-          ) : <Outlet />}
+          ) : <Suspense fallback={<Loading />}><Outlet /></Suspense>}
         </main>
         <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-white border-t border-gray-100 flex pb-safe no-print">
           {TABS.map((t) => link(t, true))}

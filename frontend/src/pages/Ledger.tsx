@@ -5,6 +5,7 @@ import { Page } from '../components/Layout';
 import HowTo from '../components/HowTo';
 import { act, Empty, ErrorBox, Field, Filter, FormModal, Loading, matches, SearchBox, Stat, Tabs, toast, Toolbar, useLoad } from '../components/ui';
 import { useAuth, useCanWrite } from '../context/AuthContext';
+import { expenseByCategory, PieChart } from '../components/charts';
 import { addMonth, d10, L, money, thisMonth, today } from '../lib/format';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -151,6 +152,10 @@ function Report({ month }: { month: string }) {
         <h2 className="text-center text-lg font-bold mb-1">{c.name} {month.replace('-', ' 年 ')} 月 財務報告</h2>
         <p className="text-center text-xs text-gray-500 mb-4">依公寓大廈管理條例，公共基金專戶單獨列帳</p>
         <div className="grid md:grid-cols-2 gap-x-6"><Block fund="MGMT" /><Block fund="RESERVE" /></div>
+        <div className="mb-6 break-inside-avoid">
+          <h3 className="font-bold mb-2">本月支出結構（兩帳戶合計）</h3>
+          <PieChart items={expenseByCategory(r.items)} format={money} />
+        </div>
         <div className="text-sm border-t pt-3">
           本月管理費應收 <b className="num">{money(r.collection.billed)}</b> 元，已收 <b className="num">{money(r.collection.paid)}</b> 元，
           收繳率 <b>{r.collection.rate == null ? '-' : `${r.collection.rate}%`}</b>（{r.collection.paidBills} / {r.collection.bills} 戶繳清）。

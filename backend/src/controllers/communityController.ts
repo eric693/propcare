@@ -5,7 +5,7 @@ import { prisma } from '../prisma';
 import { AuthRequest, communityIdsOf } from '../middleware/auth';
 import { audit } from '../services/common';
 import { arrears, fundBalances, HttpError } from '../services/feeService';
-import { addDays, toDate, todayStr } from '../utils/dates';
+import { addDays, addMonths, dateStr, toDate, todayStr } from '../utils/dates';
 import { parse } from '../utils/validate';
 
 const communitySchema = z.object({
@@ -124,7 +124,34 @@ export async function dashboard(req: AuthRequest, res: Response) {
     contracts: contracts.filter((k) => k.endDate! <= toDate(addDays(t, k.notifyDays))),
     pendingApprovals: pending,
     balance: await fundBalances(c),
+    charts: await dashboardCharts(cid, t),
   });
+}
+
+/** 工作台圖表：近 6 個月收繳率與收支、今年支出科目、近 12 個月報修類別（只計已核准帳目） */
+async function dashboardCharts(cid: string, t: string) {
+  const first = `${t.slice(0, 7)}-01`;
+  const months = [-5, -4, -3, -2, -1, 0].map((n) => addMonths(first, n).slice(0, 7));
+  const [bills, entries, expense, repairs] = await Promise.all([
+    prisma.feeBill.groupBy({ by: ['period'], where: { communityId: cid, period: { in: months }, status: { not: 'VOID' } }, _sum: { total: true, paid: true } }),
+    prisma.ledgerEntry.findMany({ where: { communityId: cid, approval: 'APPROVED', date: { gte: toDate(`${months[0]}-01`) } }, select: { date: true, direction: true, amount: true } }),
+    prisma.ledgerEntry.groupBy({ by: ['category'], where: { communityId: cid, approval: 'APPROVED', direction: 'OUT', date: { gte: toDate(`${t.slice(0, 4)}-01-01`) } }, _sum: { amount: true } }),
+    prisma.repair.groupBy({ by: ['category'], where: { communityId: cid, createdAt: { gte: toDate(addMonths(t, -12)) } }, _count: true }),
+  ]);
+  return {
+    collection: months.map((period) => {
+      const b = bills.find((x) => x.period === period);
+      const billed = b?._sum.total ?? 0, paid = b?._sum.paid ?? 0;
+      return { period, billed, paid, rate: billed ? Math.round(paid / billed * 1000) / 10 : null };
+    }),
+    cashflow: months.map((period) => {
+      const inMonth = entries.filter((e) => dateStr(e.date).startsWith(period));
+      const sum = (dir: string) => inMonth.filter((e) => e.direction === dir).reduce((s, e) => s + e.amount, 0);
+      return { period, income: sum('IN'), expense: sum('OUT') };
+    }),
+    expenseByCategory: expense.map((r) => ({ label: r.category, value: r._sum.amount ?? 0 })).sort((a, b) => b.value - a.value),
+    repairsByCategory: repairs.map((r) => ({ label: r.category, value: r._count })).sort((a, b) => b.value - a.value),
+  };
 }
 
 // ── 帳號管理（物業公司管理員）────────────────────────────────────────

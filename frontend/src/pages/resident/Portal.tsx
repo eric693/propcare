@@ -1,8 +1,9 @@
-import { createContext, FormEvent, ReactNode, useContext, useEffect, useState } from 'react';
+import { createContext, FormEvent, ReactNode, Suspense, useContext, useEffect, useState } from 'react';
 import { Link, Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { Bell, CalendarDays, ChevronRight, Home, LogOut, Megaphone, Package, Receipt, User, Wrench } from 'lucide-react';
 import api, { errMsg, rapi, RESIDENT_TOKEN } from '../../api/client';
 import { Empty, ErrorBox, Field, Filter, FormModal, Loading, matches, SearchBox, Tabs, toast, useLoad } from '../../components/ui';
+import { expenseByCategory, PieChart } from '../../components/charts';
 import { addDays, d10, dt, L, money, thisMonth, addMonth, today, pct } from '../../lib/format';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -86,7 +87,7 @@ export function ResidentLayout() {
             <button onClick={() => nav('/r/me')} className="ml-auto p-2 rounded-lg hover:bg-white/10" aria-label="我的帳號"><User className="w-5 h-5" /></button>
           </div>
         </header>
-        <main className="max-w-xl mx-auto px-4 py-4"><Outlet /></main>
+        <main className="max-w-xl mx-auto px-4 py-4"><Suspense fallback={<Loading />}><Outlet /></Suspense></main>
         <nav className="fixed bottom-0 inset-x-0 bg-white border-t border-gray-100 pb-safe z-50">
           <div className="max-w-xl mx-auto flex">{TABS.map((t) => (
             <NavLink key={t.to} to={t.to} end={t.end} className={({ isActive }) => `flex-1 flex flex-col items-center gap-0.5 py-2 text-[11px] ${isActive ? 'text-brand font-semibold' : 'text-gray-400'}`}>
@@ -325,6 +326,11 @@ function RReport() {
       <ErrorBox error={error} />
       {!r ? <Loading /> : <>
         <div className="card mb-3"><div className="text-xs text-gray-500">管理費收繳率</div><div className="text-2xl font-bold">{r.collection.rate == null ? '-' : `${r.collection.rate}%`}</div><div className="text-xs text-gray-500">{r.collection.paidBills} / {r.collection.bills} 戶繳清</div></div>
+        <div className="card mb-3">
+          <h3 className="font-semibold text-sm mb-1">本月錢花在哪裡</h3>
+          <p className="text-xs text-gray-400 mb-3">管理費帳戶＋公共基金的支出，依科目合計（元）</p>
+          <PieChart items={expenseByCategory(r.items)} format={money} />
+        </div>
         {(['MGMT', 'RESERVE'] as const).map((fund) => (
           <div key={fund} className="card mb-3">
             <h3 className="font-semibold text-sm mb-2">{L.fund[fund]}</h3>

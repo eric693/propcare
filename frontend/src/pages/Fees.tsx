@@ -5,6 +5,7 @@ import api from '../api/client';
 import { Page } from '../components/Layout';
 import HowTo from '../components/HowTo';
 import { act, Empty, ErrorBox, Field, Filter, FormModal, Loading, matches, Modal, SearchBox, Stat, Tabs, toast, Toolbar, useLoad } from '../components/ui';
+import { BarChart, ChartCard, PieChart } from '../components/charts';
 import { useAuth, useCanWrite } from '../context/AuthContext';
 import { addMonth, d10, L, money, thisMonth, today } from '../lib/format';
 import { Bill } from '../types';
@@ -190,6 +191,25 @@ function Payments() {
   );
 }
 
+/** 欠費帳齡：依欠繳期數分組（3 期以上即逾二期） */
+function ArrearsAging({ rows }: { rows: any[] }) {
+  const buckets = [['欠 1 期', 1, 1], ['欠 2 期', 2, 2], ['欠 3 期以上', 3, Infinity]] as const;
+  const groups = buckets.map(([label, lo, hi]) => {
+    const g = rows.filter((r) => r.count >= lo && r.count <= hi);
+    return { label, units: g.length, amount: g.reduce((s, r) => s + r.amount, 0) };
+  });
+  return (
+    <div className="grid lg:grid-cols-2 gap-4 mb-3">
+      <ChartCard title="欠費帳齡：戶數" sub="依欠繳期數分組；3 期以上即逾二期">
+        <BarChart labels={groups.map((g) => g.label)} series={[{ name: '戶數', values: groups.map((g) => g.units) }]} format={(v) => `${v} 戶`} height={180} integer />
+      </ChartCard>
+      <ChartCard title="欠費帳齡：金額" sub="各組未繳金額（元）">
+        <PieChart items={groups.map((g) => ({ label: g.label, value: g.amount }))} format={money} />
+      </ChartCard>
+    </div>
+  );
+}
+
 function Arrears() {
   const { cid } = useAuth();
   const canWrite = useCanWrite();
@@ -211,6 +231,7 @@ function Arrears() {
             <Stat label="逾二期" value={all.filter((r) => r.overTwo).length} tone={all.some((r) => r.overTwo) ? 'bad' : undefined} sub="可依條例第 21 條催告" />
             <Stat label="欠費總額" value={money(all.reduce((s, r) => s + r.amount, 0))} />
           </div>
+          {all.length > 0 && <ArrearsAging rows={all} />}
           <Toolbar count={`顯示 ${rows.length} / ${all.length} 戶`}>
             <SearchBox value={q} onChange={setQ} placeholder="搜尋戶別、所有權人、聯絡人、電話" />
             <Filter value={level} onChange={setLevel} all="全部欠費戶" options={[['over2', '逾二期'], ['under', '二期以內']]} />

@@ -29,6 +29,15 @@ export default function Intro() {
         <p className="text-gray-600 mt-4 max-w-2xl leading-relaxed">管理費收繳、公共基金帳務、包裹代收、公設預約、報修、區分所有權人會議表決與法定檢查申報，依《公寓大廈管理條例》設計。總幹事少跑腿、委員帳目清楚、住戶隨時查得到。</p>
         <div className="flex flex-wrap gap-2 mt-6"><Link to="/login" className="btn-primary px-5 py-2.5">試用示範帳號</Link><Link to="/r/login" className="btn-secondary px-5 py-2.5">看住戶端畫面</Link></div>
       </section>
+      <section className="max-w-5xl mx-auto px-4 pb-14">
+        <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-1">實際畫面</h2>
+        <p className="text-sm text-gray-500 mb-5">以下為示範社區的資料，登入示範帳號即可操作。</p>
+        <Shot src="/intro/dashboard.jpg" w={1280} h={860} title="總幹事工作台" body="收繳率、欠費、待辦一眼看完；近 6 個月收繳與收支、支出科目、報修類別都畫成圖表。" />
+        <div className="grid md:grid-cols-[2fr_1fr] gap-4 mt-4 items-start">
+          <Shot src="/intro/arrears.jpg" w={1280} h={860} title="欠費帳齡與催告" body="依欠繳期數分組，逾二期的戶數與金額清楚列出，可直接列印催告函。" />
+          <Shot src="/intro/resident.jpg" w={780} h={1560} title="住戶手機財報" body="住戶看得到每個月的錢花在哪裡，帳目公開透明。" phone />
+        </div>
+      </section>
       <section className="max-w-5xl mx-auto px-4 pb-16 grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {FEATURES.map((f) => (
           <div key={f.title} className="card">
@@ -40,5 +49,16 @@ export default function Intro() {
       </section>
       <footer className="text-center text-xs text-gray-400 pb-8">PropCare 物業管家</footer>
     </div>
+  );
+}
+
+function Shot({ src, w, h, title, body, phone }: { src: string; w: number; h: number; title: string; body: string; phone?: boolean }) {
+  return (
+    <figure className="card p-3">
+      <div className={phone ? 'mx-auto max-w-[240px] rounded-[1.75rem] border-[6px] border-gray-800 overflow-hidden' : 'rounded-xl border border-gray-200 overflow-hidden'}>
+        <img src={src} width={w} height={h} alt={title} loading="lazy" className="block w-full h-auto" />
+      </div>
+      <figcaption className="px-1 pt-3"><b className="text-sm">{title}</b><p className="text-sm text-gray-600 mt-0.5 leading-relaxed">{body}</p></figcaption>
+    </figure>
   );
 }

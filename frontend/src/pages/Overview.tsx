@@ -7,6 +7,7 @@ import HowTo from '../components/HowTo';
 import { ErrorBox, FormModal, Field, Loading, matches, SearchBox, Stat, Toolbar, useLoad, toast } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { money } from '../lib/format';
+import { ChartCard, HBarChart, PieChart } from '../components/charts';
 
 interface Row { id: string; name: string; units: number; billed: number; paid: number; rate: number | null; arrearsUnits: number; arrearsAmount: number; overTwo: number; packages: number; openRepairs: number; inspectionsDue: number; pendingApprovals: number; balance: { mgmt: number; reserve: number } }
 
@@ -34,6 +35,16 @@ export default function Overview() {
             <Stat label="欠費戶數" value={sum('arrearsUnits')} tone={sum('overTwo') ? 'bad' : undefined} sub={`逾二期 ${sum('overTwo')} 戶・${money(sum('arrearsAmount'))} 元`} />
             <Stat label="待處理" value={sum('openRepairs') + sum('pendingApprovals')} sub={`報修 ${sum('openRepairs')}・待核准支出 ${sum('pendingApprovals')}`} />
           </div>
+          {rows.length > 0 && (
+            <div className="grid lg:grid-cols-2 gap-4 mb-4">
+              <ChartCard title={`${data.period} 各社區收繳率`} sub="點社區名稱進入該社區工作台">
+                <HBarChart max={100} format={(v) => `${v}%`} items={[...rows].sort((a, b) => (a.rate ?? -1) - (b.rate ?? -1)).map((r) => ({ label: r.name, value: r.rate, onClick: () => go(r.id) }))} />
+              </ChartCard>
+              <ChartCard title="欠費金額分布" sub="各社區未繳金額（元）">
+                <PieChart items={rows.map((r) => ({ label: r.name, value: r.arrearsAmount }))} format={money} />
+              </ChartCard>
+            </div>
+          )}
           <Toolbar count={`顯示 ${rows.filter((r) => matches(q, r.name)).length} / ${rows.length} 個社區`}>
             <SearchBox value={q} onChange={setQ} placeholder="搜尋社區名稱" />
             <select className="input w-auto" value={issue} onChange={(e) => setIssue(e.target.value)}>
