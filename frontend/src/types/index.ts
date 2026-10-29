@@ -11,7 +11,7 @@ export interface Community {
 export interface Resident { id: string; name: string; phone: string; email: string; relation: string; lineBound: boolean; lastLogin: string | null; note: string }
 export interface Unit {
   id: string; label: string; building: string; floor: string; no: string; area: number; share: number; feeOverride: number | null;
-  occupancy: string; ownerName: string; note: string; residents: Resident[]; parkingSpaces: { id: string; code: string; monthlyFee: number; kind: string }[];
+  occupancy: string; ownerName: string; vaCode: string; note: string; residents: Resident[]; parkingSpaces: { id: string; code: string; monthlyFee: number; kind: string }[];
   monthlyFee: number; owed: { amount: number; count: number };
 }
 export interface Bill {

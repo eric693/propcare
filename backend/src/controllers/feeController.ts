@@ -97,20 +97,26 @@ export async function payUnit(req: AuthRequest, res: Response) {
     paidDate: zDate.default(todayStr()),
     note: z.string().trim().max(200).default(''),
   }), req.body);
-  const bills = await prisma.feeBill.findMany({ where: { communityId: req.cid!, unitId: b.unitId, status: { in: ['UNPAID', 'PARTIAL'] } }, orderBy: { period: 'asc' } });
+  const receipts = await payUnitOldestFirst({ communityId: req.cid!, unitId: b.unitId, amount: b.amount, method: b.method, paidDate: b.paidDate, note: b.note, by: req.user!.name });
+  res.status(201).json({ receipts });
+}
+
+/** 整戶收款：由最舊的未繳帳單依序沖銷（人工收款與銀行入帳匯入共用） */
+export async function payUnitOldestFirst(p: { communityId: string; unitId: string; amount: number; method: 'CASH' | 'TRANSFER' | 'ATM' | 'STORE' | 'OTHER'; paidDate: string; note: string; by: string }) {
+  const bills = await prisma.feeBill.findMany({ where: { communityId: p.communityId, unitId: p.unitId, status: { in: ['UNPAID', 'PARTIAL'] } }, orderBy: { period: 'asc' } });
   const owed = bills.reduce((s, x) => s + x.total - x.paid, 0);
   if (!bills.length) throw new HttpError(400, '這一戶沒有未繳帳單');
-  if (b.amount > owed) throw new HttpError(400, `收款金額超過未繳總額 ${owed.toLocaleString()} 元`);
-  let left = b.amount;
+  if (p.amount > owed) throw new HttpError(400, `收款金額超過未繳總額 ${owed.toLocaleString()} 元`);
+  let left = p.amount;
   const receipts: string[] = [];
   for (const bill of bills) {
     if (left <= 0) break;
     const amt = Math.min(left, bill.total - bill.paid);
-    const r = await recordPayment({ communityId: req.cid!, billId: bill.id, amount: amt, method: b.method, paidDate: b.paidDate, note: b.note, by: req.user!.name });
+    const r = await recordPayment({ communityId: p.communityId, billId: bill.id, amount: amt, method: p.method, paidDate: p.paidDate, note: p.note, by: p.by });
     receipts.push(r.payment.receiptNo);
     left -= amt;
   }
-  res.status(201).json({ receipts });
+  return receipts;
 }
 
 export async function listPayments(req: AuthRequest, res: Response) {

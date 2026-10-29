@@ -43,7 +43,8 @@ export async function residentMe(req: ResidentRequest, res: Response) {
   const r = req.resident!, c = req.community!;
   res.json({
     id: r.id, name: r.name, phone: r.phone, relation: r.relation, unit: { id: r.unit.id, label: r.unit.label },
-    community: { id: c.id, name: c.name, phone: c.phone, bankInfo: c.bankInfo },
+    community: { id: c.id, name: c.name, phone: c.phone, bankInfo: c.bankInfo, vaBank: c.vaBank },
+    vaCode: c.vaPrefix ? r.unit.vaCode : '', privacyAt: r.privacyAt,
     mustChangePassword: r.mustChangePassword, lineBound: Boolean(r.lineUserId), lineEnabled: config.line.enabled,
   });
 }
@@ -206,7 +207,8 @@ export async function residentMeetings(req: ResidentRequest, res: Response) {
     out.push({
       id: m.id, kind: m.kind, title: m.title, meetingDate: dateStr(m.meetingDate), meetingTime: m.meetingTime, location: m.location,
       agenda: m.agenda, minutes: m.status === 'HELD' ? m.minutes : '', status: m.status,
-      result: r ? { quorum: r.quorum, motions: r.motions.map(({ votes, ...mo }) => mo) } : null,
+      // 不回傳逐戶投票、反對與權重，只給結果
+      result: r ? { quorum: (({ weights, capped, ...q }) => q)(r.quorum), motions: r.motions.map(({ votes, objections, ...mo }) => mo) } : null,
     });
   }
   res.json(out);

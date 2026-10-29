@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { Check, Plus, Printer, Trash2, X } from 'lucide-react';
+import { Check, Download, Plus, Printer, Trash2, X } from 'lucide-react';
 import api from '../api/client';
 import { Page } from '../components/Layout';
 import HowTo from '../components/HowTo';
 import { act, Empty, ErrorBox, Field, Filter, FormModal, Loading, matches, SearchBox, Stat, Tabs, toast, Toolbar, useLoad } from '../components/ui';
 import { useAuth, useCanWrite } from '../context/AuthContext';
 import { expenseByCategory, PieChart } from '../components/charts';
-import { addMonth, d10, L, money, thisMonth, today } from '../lib/format';
+import { addMonth, d10, downloadCsv, L, money, roc, rocPeriod, thisMonth, today } from '../lib/format';
+import { logExport } from '../lib/exportLog';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export default function Ledger() {
@@ -61,6 +62,8 @@ function Entries({ month }: { month: string }) {
             <Filter value={dir} onChange={setDir} all="收入與支出" options={[['IN', '收入'], ['OUT', '支出']]} />
             <Filter value={cat} onChange={setCat} all="全部科目" options={cats.map((c) => [c, c])} />
             <Filter value={appr} onChange={setAppr} all="全部狀態" options={L.approval} />
+            <button className="btn-secondary" disabled={!rows.length} onClick={() => downloadCsv(`收支明細_${month}`, ['日期', '帳戶', '收支', '科目', '說明', '廠商', '金額', '憑證號碼', '狀態', '核准人', '經手'],
+              rows.map((r) => [d10(r.date), L.fund[r.fund], r.direction === 'IN' ? '收入' : '支出', r.category, r.description, r.vendor?.name ?? '', r.amount, r.voucherNo, L.approval[r.approval], r.approvedBy, r.createdBy]), logExport)}><Download className="w-4 h-4" />匯出 Excel</button>
             {canWrite && <button className="btn-primary" onClick={() => setAdding({})}><Plus className="w-4 h-4" />記一筆</button>}
           </Toolbar>
           {!rows.length ? <Empty>{all.length ? '沒有符合條件的收支' : `${month} 沒有收支紀錄`}</Empty> : (
@@ -149,7 +152,7 @@ function Report({ month }: { month: string }) {
       <div className="flex justify-end mb-2 no-print"><button className="btn-secondary" onClick={() => window.print()}><Printer className="w-4 h-4" />列印月報</button></div>
       {r.pendingApprovals > 0 && <div className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mb-3 no-print">本月尚有 {r.pendingApprovals} 筆支出待核准，未列入月報。</div>}
       <div className="print-area">
-        <h2 className="text-center text-lg font-bold mb-1">{c.name} {month.replace('-', ' 年 ')} 月 財務報告</h2>
+        <h2 className="text-center text-lg font-bold mb-1">{c.name} 中華民國 {rocPeriod(month)} 財務報告</h2>
         <p className="text-center text-xs text-gray-500 mb-4">依公寓大廈管理條例，公共基金專戶單獨列帳</p>
         <div className="grid md:grid-cols-2 gap-x-6"><Block fund="MGMT" /><Block fund="RESERVE" /></div>
         <div className="mb-6 break-inside-avoid">
@@ -163,6 +166,7 @@ function Report({ month }: { month: string }) {
         <div className="mt-10 grid grid-cols-3 text-sm text-center">
           <div>製表：</div><div>財務委員：</div><div>主任委員：</div>
         </div>
+        <div className="mt-6 text-right text-xs text-gray-500">製表日期：{roc(today())}</div>
       </div>
     </div>
   );

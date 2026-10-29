@@ -5,7 +5,7 @@ import { prisma } from '../prisma';
 import { AuthRequest, communityIdsOf } from '../middleware/auth';
 import { audit } from '../services/common';
 import { arrears, fundBalances, HttpError } from '../services/feeService';
-import { addDays, addMonths, dateStr, toDate, todayStr } from '../utils/dates';
+import { addDays, addMonths, byLabel, dateStr, toDate, todayStr } from '../utils/dates';
 import { parse } from '../utils/validate';
 
 const communitySchema = z.object({
@@ -27,6 +27,10 @@ const communitySchema = z.object({
   quorumReAttend: z.coerce.number().min(0).max(1).default(0.2),
   quorumRePass: z.coerce.number().min(0).max(1).default(0.5),
   packageOverdueDays: z.coerce.number().int().min(1).max(60).default(7),
+  arrearsPeriods: z.coerce.number().int().min(1, '催告期數至少 1 期').max(24).default(3),
+  arrearsAmount: z.coerce.number().int().min(0).default(0),
+  vaBank: z.string().trim().max(50).default(''),
+  vaPrefix: z.string().trim().regex(/^(\d{3,10})?$/, '虛擬帳號前綴須為 3～10 位數字').default(''),
   note: z.string().trim().max(1000).default(''),
 });
 
@@ -54,9 +58,24 @@ export async function createCommunity(req: AuthRequest, res: Response) {
 
 export async function updateCommunity(req: AuthRequest, res: Response) {
   const data = parse(communitySchema.partial(), req.body);
+  const before = req.community!;
   const c = await prisma.community.update({ where: { id: req.cid! }, data });
+  if (c.vaPrefix && c.vaPrefix !== before.vaPrefix) await assignVaCodes(c.id, c.vaPrefix);
   await audit(c.id, { type: 'staff', id: req.user!.id, name: req.user!.name }, '修改社區設定');
   res.json(c);
+}
+
+/** 每戶虛擬帳號＝前綴＋序號，共 14 碼；已有序號者沿用，新戶接續編號 */
+export async function assignVaCodes(cid: string, prefix: string) {
+  const units = (await prisma.unit.findMany({ where: { communityId: cid }, select: { id: true, label: true, building: true, vaCode: true } })).sort(byLabel);
+  const width = 14 - prefix.length;
+  const serial = (code: string) => (code.length === 14 ? Number(code.slice(-width)) : 0);
+  let next = Math.max(0, ...units.map((u) => serial(u.vaCode))) + 1;
+  for (const u of units) {
+    const n = serial(u.vaCode) || next++;
+    const code = prefix + String(n).padStart(width, '0');
+    if (code !== u.vaCode) await prisma.unit.update({ where: { id: u.id }, data: { vaCode: code } });
+  }
 }
 
 /** 法定檢查與申報的預設清單（實際週期依建物用途、規模與主管機關公告，建立後可調整） */

@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react';
 import type React from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
 import { Loading } from './components/ui';
@@ -21,6 +21,13 @@ const Announcements = page(() => import('./pages/Announcements'), 'default');
 const Meetings = page(() => import('./pages/Meetings'), 'default');
 const MeetingDetail = page(() => import('./pages/Meetings'), 'MeetingDetail');
 const Vendors = page(() => import('./pages/Vendors'), 'default');
+const Visitors = page(() => import('./pages/Visitors'), 'default');
+const Patrol = page(() => import('./pages/Patrol'), 'default');
+const PatrolScan = page(() => import('./pages/Patrol'), 'PatrolScan');
+const Feedback = page(() => import('./pages/Feedback'), 'default');
+const Documents = page(() => import('./pages/Documents'), 'default');
+const Assets = page(() => import('./pages/Assets'), 'default');
+const Privacy = page(() => import('./pages/Privacy'), 'default');
 const Accounts = page(() => import('./pages/Admin'), 'Accounts');
 const CommunitySettings = page(() => import('./pages/Admin'), 'CommunitySettings');
 const MySettings = page(() => import('./pages/Admin'), 'MySettings');
@@ -36,7 +43,9 @@ const RRepairs = page(() => import('./pages/resident/Portal'), 'RRepairs');
 function Private({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   if (loading) return <Loading />;
-  return user ? <>{children}</> : <Navigate to="/login" replace />;
+  const loc = useLocation();
+  // 未登入時記下原本要去的頁面（例如掃巡邏 QR Code），登入後導回
+  return user ? <>{children}</> : <Navigate to="/login" replace state={{ from: loc.pathname }} />;
 }
 
 export default function App() {
@@ -47,6 +56,8 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/intro" element={<Intro />} />
+          <Route path="/privacy" element={<Privacy />} />
+          <Route path="/patrol/scan/:code" element={<Private><PatrolScan /></Private>} />
           <Route path="/r/login" element={<ResidentLogin />} />
           <Route path="/r" element={<ResidentLayout />}>
             <Route index element={<RHome />} />
@@ -69,6 +80,11 @@ export default function App() {
             <Route path="meetings" element={<Meetings />} />
             <Route path="meetings/:id" element={<MeetingDetail />} />
             <Route path="vendors" element={<Vendors />} />
+            <Route path="visitors" element={<Visitors />} />
+            <Route path="patrol" element={<Patrol />} />
+            <Route path="feedback" element={<Feedback />} />
+            <Route path="documents" element={<Documents />} />
+            <Route path="assets" element={<Assets />} />
             <Route path="community" element={<CommunitySettings />} />
             <Route path="accounts" element={<Accounts />} />
             <Route path="settings" element={<MySettings />} />

@@ -10,7 +10,8 @@
     "db:generate": "prisma generate",
     "db:seed": "ts-node prisma/seed.ts",
     "test": "node --test --import ./scripts/register-ts.mjs src/**/*.test.ts",
-    "test:smoke": "node scripts/smoke-test.mjs"
+    "test:smoke": "node scripts/smoke-test.mjs",
+    "test:law": "ts-node --transpile-only scripts/law-test.ts"
   },
   "dependencies": {
     "@line/bot-sdk": "^9.9.0",

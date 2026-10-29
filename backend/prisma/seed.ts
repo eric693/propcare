@@ -21,6 +21,9 @@ async function wipeDemo() {
   const cs = await prisma.community.findMany({ where: { name: { in: DEMO_NAMES } } });
   for (const c of cs) {
     const id = c.id;
+    await prisma.poll.deleteMany({ where: { communityId: id } });
+    await prisma.patrolLog.deleteMany({ where: { communityId: id } });
+    for (const m of ['patrolPoint', 'bankTxn', 'dunning', 'visitor', 'feedback', 'document', 'asset'] as const) await (prisma[m] as unknown as { deleteMany: (a: object) => Promise<unknown> }).deleteMany({ where: { communityId: id } });
     await prisma.motionVote.deleteMany({ where: { motion: { meeting: { communityId: id } } } });
     await prisma.meetingAttendance.deleteMany({ where: { meeting: { communityId: id } } });
     await prisma.meeting.deleteMany({ where: { communityId: id } });
@@ -44,7 +47,7 @@ async function wipeDemo() {
   }
 }
 
-async function seedCommunity(opts: { name: string; address: string; buildings: string[]; floors: number; perFloor: number; rate: number; reserve: number }) {
+async function seedCommunity(opts: { name: string; address: string; buildings: string[]; floors: number; perFloor: number; rate: number; reserve: number; vaPrefix: string }) {
   const t = todayStr();
   const c = await prisma.community.create({
     data: {
@@ -179,6 +182,54 @@ async function seedCommunity(opts: { name: string; address: string; buildings: s
   await prisma.motionVote.createMany({ data: attend.map((u, i) => ({ motionId: m1.id, unitId: u.id, vote: i % 9 === 0 ? 'NO' as const : 'YES' as const })) });
   await prisma.motionVote.createMany({ data: attend.map((u, i) => ({ motionId: m2.id, unitId: u.id, vote: i % 3 === 0 ? 'NO' as const : i % 7 === 0 ? 'ABSTAIN' as const : 'YES' as const })) });
   await prisma.meeting.create({ data: { communityId: c.id, kind: 'COMMITTEE', title: '管理委員會例會', meetingDate: toDate(addDays(t, 12)), location: '管理中心會議室', agenda: '一、本月財務報告\n二、電梯保養合約續約\n三、地下室漏水處理', status: 'PLANNED' } });
+  await prisma.meeting.update({ where: { id: meeting.id }, data: { minutesSentDate: toDate(addDays(t, -30)) } });
+
+  const residents = await prisma.resident.findMany({ where: { communityId: c.id }, orderBy: { createdAt: 'asc' } });
+  // 虛擬帳號：前綴＋序號共 14 碼
+  const prefix = opts.vaPrefix;
+  await prisma.community.update({ where: { id: c.id }, data: { vaBank: '示範銀行 012', vaPrefix: prefix } });
+  for (const [i, u] of units.entries()) await prisma.unit.update({ where: { id: u.id }, data: { vaCode: prefix + String(i + 1).padStart(14 - prefix.length, '0') } });
+
+  // 催告送達紀錄：欠最多期的前 3 戶
+  const owing = await prisma.feeBill.groupBy({ by: ['unitId'], where: { communityId: c.id, status: { in: ['UNPAID', 'PARTIAL'] } }, _count: true, _sum: { total: true, paid: true }, orderBy: { _count: { unitId: 'desc' } }, take: 3 });
+  for (const [i, o] of owing.entries()) {
+    await prisma.dunning.create({ data: { communityId: c.id, unitId: o.unitId, date: toDate(addDays(t, -10 - i * 3)), method: i === 0 ? '存證信函' : '雙掛號', trackingNo: `${i === 0 ? 'TP' : 'RR'}${String(482019 + i * 37)}`, amount: (o._sum.total ?? 0) - (o._sum.paid ?? 0), deliveredDate: i < 2 ? toDate(addDays(t, -8 - i * 3)) : null, receivedBy: i < 2 ? '本人' : '', createdBy: '總幹事' } });
+  }
+
+  // 訪客：今天在場 2 組，過去幾天的紀錄
+  const visitors = [['陳先生', '拜訪', 2, 'BXK-2231', 0], ['foodpanda 外送', '外送', 1, '', 0], ['李小姐', '看屋', 1, '', 1], ['冷氣保養 張師傅', '廠商施工', 2, 'AQC-8890', 1], ['王太太', '拜訪', 3, 'RDE-5521', 2], ['林先生', '拜訪', 1, '', 3]] as const;
+  for (const [i, [name, purpose, headcount, plate, daysAgo]] of visitors.entries()) {
+    const inAt = new Date(Date.now() - daysAgo * 86400000 - (i + 1) * 40 * 60000);
+    await prisma.visitor.create({ data: { communityId: c.id, unitId: units[(i * 7) % units.length].id, name, purpose, headcount, plate, badge: plate ? `訪-${10 + i}` : '', inAt, outAt: daysAgo === 0 ? null : new Date(inAt.getTime() + 90 * 60000), createdBy: '保全 陳大哥' } });
+  }
+  // 寄放物品
+  await prisma.package.create({ data: { communityId: c.id, unitId: units[3].id, kind: 'DEPOSIT', depositor: residents[3]?.name ?? '', recipient: '表弟 小周', shelf: '寄放櫃', pickupCode: String(700000 + units.length), receivedBy: '總幹事', note: '鑰匙一串' } });
+
+  // 住戶意見
+  const fbs = [['噪音', '樓上深夜拖拉桌椅', '最近一週晚上 12 點後常有拖拉聲，麻煩協助宣導。', ''], ['停車', '訪客車位被長期占用', 'B1 訪客車位有同一台車停了三天。', '已張貼移車通知，並請保全加強巡查，謝謝反映。'], ['建議', '希望增設電動車充電樁', '', '']] as const;
+  for (const [i, [category, title, content, reply]] of fbs.entries()) {
+    const r = residents[(i * 11) % residents.length];
+    await prisma.feedback.create({ data: { communityId: c.id, unitId: r.unitId, residentId: r.id, category, title, content, reply, status: reply ? 'REPLIED' : 'OPEN', repliedBy: reply ? '總幹事' : '', repliedAt: reply ? new Date() : null, createdAt: new Date(Date.now() - (i + 1) * 86400000) } });
+  }
+
+  // 意見調查（進行中，約三成住戶作答）
+  const poll = await prisma.poll.create({ data: { communityId: c.id, title: '中庭是否增設兒童遊戲區', description: '預估經費約 25 萬元，由公共基金支應；若多數贊成將提區權會決議。', options: ['贊成', '反對', '沒意見'], endDate: toDate(addDays(t, 10)), createdBy: '總幹事' } });
+  await prisma.pollVote.createMany({ data: units.filter((_, i) => i % 3 === 0).map((u, i) => ({ pollId: poll.id, unitId: u.id, option: i % 5 === 0 ? 1 : i % 7 === 0 ? 2 : 0 })) });
+
+  // 財產清冊
+  const assets = [['F-001', '滅火器（10 型）', '消防', '各樓梯廳', 24, 19200, 'IN_USE'], ['S-001', '監視系統主機與攝影機', '監視門禁', '管理中心', 1, 186000, 'IN_USE'], ['G-001', '跑步機', '健身器材', '健身房', 2, 96000, 'REPAIR'], ['M-001', '地下室排水馬達', '機電', 'B2 機房', 2, 64000, 'IN_USE'], ['O-001', '管理中心電腦', '電腦文具', '管理中心', 1, 28000, 'IN_USE']] as const;
+  for (const [assetNo, name, category, location, quantity, cost, status] of assets) {
+    await prisma.asset.create({ data: { communityId: c.id, assetNo, name, category, location, quantity, cost, status, purchaseDate: toDate(addMonths(t, -30)), keeper: '總幹事' } });
+  }
+
+  // 巡邏點與今日紀錄
+  const pts = [];
+  for (const [i, [name, location]] of [['大門警衛室', '1F'], ['地下室 B1 車道', 'B1'], ['地下室 B2 機房', 'B2'], ['頂樓水塔', 'RF'], ['中庭', '1F']].entries()) {
+    pts.push(await prisma.patrolPoint.create({ data: { communityId: c.id, name, location, seq: i + 1, code: `demo${c.id.slice(-6)}${i}` } }));
+  }
+  for (const [i, p] of pts.slice(0, 4).entries()) {
+    await prisma.patrolLog.create({ data: { communityId: c.id, pointId: p.id, userName: '保全 陳大哥', note: i === 2 ? '排水馬達運轉正常' : '', scannedAt: new Date(Date.now() - (5 - i) * 15 * 60000) } });
+  }
   return c;
 }
 
@@ -187,8 +238,8 @@ async function main() {
   if (reset) await wipeDemo();
   else if (await prisma.community.count()) { console.log('已有社區資料，略過（要重建示範資料請加 --reset）'); return; }
 
-  const c1 = await seedCommunity({ name: DEMO_NAMES[0], address: '台北市信義區示範路 100 號', buildings: ['A', 'B'], floors: 12, perFloor: 4, rate: 80, reserve: 10 });
-  const c2 = await seedCommunity({ name: DEMO_NAMES[1], address: '新北市板橋區河岸街 8 號', buildings: ['C'], floors: 10, perFloor: 4, rate: 65, reserve: 15 });
+  const c1 = await seedCommunity({ name: DEMO_NAMES[0], address: '台北市信義區示範路 100 號', buildings: ['A', 'B'], floors: 12, perFloor: 4, rate: 80, reserve: 10, vaPrefix: '8001' });
+  const c2 = await seedCommunity({ name: DEMO_NAMES[1], address: '新北市板橋區河岸街 8 號', buildings: ['C'], floors: 10, perFloor: 4, rate: 65, reserve: 15, vaPrefix: '8002' });
 
   // 帳號：示範帳號（總幹事，管兩個示範社區）、示範委員；管理員帳號只在第一次建立
   const demo = process.env.DEMO_ACCOUNT?.trim().toLowerCase();

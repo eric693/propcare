@@ -20,19 +20,19 @@ enum Role {
 }
 
 model User {
-  id                  String          @id @default(cuid())
-  username            String          @unique
-  password            String
-  name                String
-  role                Role            @default(MANAGER)
-  title               String          @default("")
-  phone               String          @default("")
-  active              Boolean         @default(true)
-  lineUserId          String?         @unique
-  lineBindingCode     String?         @unique
-  lineBindingExpiry   DateTime?
-  createdAt           DateTime        @default(now())
-  communities         UserCommunity[]
+  id                String          @id @default(cuid())
+  username          String          @unique
+  password          String
+  name              String
+  role              Role            @default(MANAGER)
+  title             String          @default("")
+  phone             String          @default("")
+  active            Boolean         @default(true)
+  lineUserId        String?         @unique
+  lineBindingCode   String?         @unique
+  lineBindingExpiry DateTime?
+  createdAt         DateTime        @default(now())
+  communities       UserCommunity[]
 }
 
 model UserCommunity {
@@ -46,7 +46,7 @@ model UserCommunity {
 
 // ── 社區 ─────────────────────────────────────────────────────────────
 enum FeeMode {
-  AREA  // 每坪單價 × 坪數
+  AREA // 每坪單價 × 坪數
   FIXED // 每戶固定
 }
 
@@ -56,14 +56,14 @@ model Community {
   address            String   @default("")
   phone              String   @default("")
   feeMode            FeeMode  @default(AREA)
-  feeRate            Float    @default(0)   // 每坪單價（AREA）或每戶月費（FIXED）
-  reserveRatio       Float    @default(0)   // 管理費提撥公共基金比例 %（依規約；條例第 18 條）
-  dueDay             Int      @default(15)  // 每月繳費期限日
-  autoBillDay        Int      @default(1)   // 每月幾號自動開立當月帳單（0＝不自動）
-  remindDaysBefore   Int      @default(3)   // 繳費期限前幾天 LINE 提醒（0＝不提醒）
+  feeRate            Float    @default(0) // 每坪單價（AREA）或每戶月費（FIXED）
+  reserveRatio       Float    @default(0) // 管理費提撥公共基金比例 %（依規約；條例第 18 條）
+  dueDay             Int      @default(15) // 每月繳費期限日
+  autoBillDay        Int      @default(1) // 每月幾號自動開立當月帳單（0＝不自動）
+  remindDaysBefore   Int      @default(3) // 繳費期限前幾天 LINE 提醒（0＝不提醒）
   bankInfo           String   @default("")
-  openingMgmt        Int      @default(0)   // 管理費帳戶期初餘額
-  openingReserve     Int      @default(0)   // 公共基金期初餘額
+  openingMgmt        Int      @default(0) // 管理費帳戶期初餘額
+  openingReserve     Int      @default(0) // 公共基金期初餘額
   openingDate        String   @default("")
   // 區分所有權人會議定額（預設依條例第 31、32 條；規約另有規定時可改）
   quorumAttend       Float    @default(0.6667)
@@ -71,6 +71,12 @@ model Community {
   quorumReAttend     Float    @default(0.2)
   quorumRePass       Float    @default(0.5)
   packageOverdueDays Int      @default(7)
+  // 欠費催告標準（條例第 21 條「已逾二期或達相當金額」；各社區依規約或管委會決議設定）
+  arrearsPeriods     Int      @default(3) // 欠繳達幾期列為可催告
+  arrearsAmount      Int      @default(0) // 或欠費達此金額（0＝不使用）
+  // 虛擬帳號（銀行核發的前綴；每戶帳號＝前綴＋戶別序號）
+  vaBank             String   @default("")
+  vaPrefix           String   @default("")
   note               String   @default("")
   active             Boolean  @default(true)
   createdAt          DateTime @default(now())
@@ -91,6 +97,15 @@ model Community {
   contracts     Contract[]
   inspections   Inspection[]
   meetings      Meeting[]
+  dunnings      Dunning[]
+  visitors      Visitor[]
+  feedbacks     Feedback[]
+  documents     Document[]
+  polls         Poll[]
+  assets        Asset[]
+  patrolPoints  PatrolPoint[]
+  patrolLogs    PatrolLog[]
+  bankTxns      BankTxn[]
 }
 
 enum Occupancy {
@@ -107,12 +122,13 @@ model Unit {
   building    String    @default("")
   floor       String    @default("")
   no          String    @default("")
-  label       String                       // 顯示用，如 A棟 5F-1
-  area        Float     @default(0)        // 計費坪數
-  share       Float     @default(0)        // 區分所有權比例（任意單位，以合計換算）
-  feeOverride Int?                         // 有值時覆寫社區管理費規則
+  label       String // 顯示用，如 A棟 5F-1
+  area        Float     @default(0) // 計費坪數
+  share       Float     @default(0) // 區分所有權比例（任意單位，以合計換算）
+  feeOverride Int? // 有值時覆寫社區管理費規則
   occupancy   Occupancy @default(SELF)
-  ownerName   String    @default("")       // 區分所有權人（登記名義）
+  ownerName   String    @default("") // 區分所有權人（登記名義）
+  vaCode      String    @default("") // 虛擬帳號（社區設定前綴後自動編號）
   note        String    @default("")
   active      Boolean   @default(true)
   community   Community @relation(fields: [communityId], references: [id])
@@ -126,6 +142,11 @@ model Unit {
   repairs       Repair[]
   attendance    MeetingAttendance[]
   votes         MotionVote[]
+  objections    MotionObjection[]
+  dunnings      Dunning[]
+  visitors      Visitor[]
+  feedbacks     Feedback[]
+  pollVotes     PollVote[]
 
   @@unique([communityId, label])
   @@index([communityId])
@@ -138,28 +159,30 @@ enum Relation {
 }
 
 model Resident {
-  id                String    @id @default(cuid())
-  communityId       String
-  unitId            String
-  name              String
-  phone             String    @default("")
-  email             String    @default("")
-  relation          Relation  @default(OWNER)
-  password          String    @default("")
-  mustChangePassword Boolean  @default(true)
-  lastLogin         DateTime?
-  lineUserId        String?
-  lineBindingCode   String?   @unique
-  lineBindingExpiry DateTime?
-  note              String    @default("")
-  active            Boolean   @default(true)
-  createdAt         DateTime  @default(now())
-  community         Community @relation(fields: [communityId], references: [id])
-  unit              Unit      @relation(fields: [unitId], references: [id])
+  id                 String    @id @default(cuid())
+  communityId        String
+  unitId             String
+  name               String
+  phone              String    @default("")
+  email              String    @default("")
+  relation           Relation  @default(OWNER)
+  password           String    @default("")
+  mustChangePassword Boolean   @default(true)
+  lastLogin          DateTime?
+  privacyAt          DateTime? // 同意個資蒐集告知的時間（個資法第 8 條）
+  lineUserId         String?
+  lineBindingCode    String?   @unique
+  lineBindingExpiry  DateTime?
+  note               String    @default("")
+  active             Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  community          Community @relation(fields: [communityId], references: [id])
+  unit               Unit      @relation(fields: [unitId], references: [id])
 
-  bookings Booking[]
-  repairs  Repair[]
-  reads    AnnouncementRead[]
+  bookings  Booking[]
+  repairs   Repair[]
+  reads     AnnouncementRead[]
+  feedbacks Feedback[]
 
   @@index([unitId])
   @@index([phone])
@@ -193,22 +216,22 @@ enum BillStatus {
 }
 
 model FeeBill {
-  id            String     @id @default(cuid())
+  id            String       @id @default(cuid())
   communityId   String
   unitId        String
-  period        String                       // YYYY-MM
-  amountMgmt    Int        @default(0)
-  amountParking Int        @default(0)
-  amountOther   Int        @default(0)
-  otherNote     String     @default("")
-  total         Int        @default(0)
-  paid          Int        @default(0)
-  dueDate       DateTime   @db.Date
-  status        BillStatus @default(UNPAID)
+  period        String // YYYY-MM
+  amountMgmt    Int          @default(0)
+  amountParking Int          @default(0)
+  amountOther   Int          @default(0)
+  otherNote     String       @default("")
+  total         Int          @default(0)
+  paid          Int          @default(0)
+  dueDate       DateTime     @db.Date
+  status        BillStatus   @default(UNPAID)
   remindedAt    DateTime?
-  createdAt     DateTime   @default(now())
-  community     Community  @relation(fields: [communityId], references: [id])
-  unit          Unit       @relation(fields: [unitId], references: [id])
+  createdAt     DateTime     @default(now())
+  community     Community    @relation(fields: [communityId], references: [id])
+  unit          Unit         @relation(fields: [unitId], references: [id])
   payments      FeePayment[]
 
   @@unique([unitId, period])
@@ -224,21 +247,21 @@ enum PayMethod {
 }
 
 model FeePayment {
-  id          String       @id @default(cuid())
+  id          String        @id @default(cuid())
   communityId String
   billId      String
   unitId      String
   amount      Int
-  method      PayMethod    @default(CASH)
-  paidDate    DateTime     @db.Date
-  receiptNo   String       @unique
-  note        String       @default("")
-  voided      Boolean      @default(false)
-  createdBy   String       @default("")
-  createdAt   DateTime     @default(now())
-  community   Community    @relation(fields: [communityId], references: [id])
-  bill        FeeBill      @relation(fields: [billId], references: [id])
-  unit        Unit         @relation(fields: [unitId], references: [id])
+  method      PayMethod     @default(CASH)
+  paidDate    DateTime      @db.Date
+  receiptNo   String        @unique
+  note        String        @default("")
+  voided      Boolean       @default(false)
+  createdBy   String        @default("")
+  createdAt   DateTime      @default(now())
+  community   Community     @relation(fields: [communityId], references: [id])
+  bill        FeeBill       @relation(fields: [billId], references: [id])
+  unit        Unit          @relation(fields: [unitId], references: [id])
   ledger      LedgerEntry[]
 }
 
@@ -269,9 +292,9 @@ model LedgerEntry {
   amount      Int
   description String      @default("")
   vendorId    String?
-  paymentId   String?                         // 由管理費收款自動產生者
+  paymentId   String? // 由管理費收款自動產生者
   voucherNo   String      @default("")
-  approval    Approval    @default(APPROVED)  // 支出需委員核准時為 PENDING
+  approval    Approval    @default(APPROVED) // 支出需委員核准時為 PENDING
   approvedBy  String      @default("")
   createdBy   String      @default("")
   createdAt   DateTime    @default(now())
@@ -289,6 +312,7 @@ enum PackageKind {
   REGISTERED
   COLD
   LARGE
+  DEPOSIT // 住戶寄放物品，由指定的人領取
 }
 
 enum PackageStatus {
@@ -307,6 +331,7 @@ model Package {
   kind        PackageKind   @default(PARCEL)
   shelf       String        @default("")
   pickupCode  String
+  depositor   String        @default("") // 寄放人（寄放物品）
   receivedAt  DateTime      @default(now())
   receivedBy  String        @default("")
   status      PackageStatus @default(WAITING)
@@ -328,8 +353,8 @@ model Facility {
   openTime    String    @default("08:00")
   closeTime   String    @default("22:00")
   slotMinutes Int       @default(60)
-  capacity    Int       @default(1)  // 同一時段可預約的戶數
-  maxPerWeek  Int       @default(0)  // 每戶每週上限（0＝不限）
+  capacity    Int       @default(1) // 同一時段可預約的戶數
+  maxPerWeek  Int       @default(0) // 每戶每週上限（0＝不限）
   advanceDays Int       @default(14) // 最多提前幾天
   fee         Int       @default(0)
   rules       String    @default("")
@@ -511,7 +536,7 @@ model Inspection {
 
 // ── 會議 ─────────────────────────────────────────────────────────────
 enum MeetingKind {
-  OWNERS    // 區分所有權人會議
+  OWNERS // 區分所有權人會議
   COMMITTEE // 管理委員會會議
 }
 
@@ -522,23 +547,24 @@ enum MeetingStatus {
 }
 
 model Meeting {
-  id          String              @id @default(cuid())
-  communityId String
-  kind        MeetingKind         @default(OWNERS)
-  reconvene   Boolean             @default(false) // 依條例第 32 條重新召集
-  urgent      Boolean             @default(false) // 急迫情事臨時會（公告 2 日以上）
-  title       String
-  meetingDate DateTime            @db.Date
-  meetingTime String              @default("19:30")
-  location    String              @default("")
-  noticeDate  DateTime?           @db.Date
-  agenda      String              @default("")
-  minutes     String              @default("")
-  status      MeetingStatus       @default(PLANNED)
-  createdAt   DateTime            @default(now())
-  community   Community           @relation(fields: [communityId], references: [id])
-  attendance  MeetingAttendance[]
-  motions     Motion[]
+  id              String              @id @default(cuid())
+  communityId     String
+  kind            MeetingKind         @default(OWNERS)
+  reconvene       Boolean             @default(false) // 依條例第 32 條重新召集
+  urgent          Boolean             @default(false) // 急迫情事臨時會（公告 2 日以上）
+  title           String
+  meetingDate     DateTime            @db.Date
+  meetingTime     String              @default("19:30")
+  location        String              @default("")
+  noticeDate      DateTime?           @db.Date
+  agenda          String              @default("")
+  minutes         String              @default("")
+  minutesSentDate DateTime?           @db.Date // 會議紀錄送達並公告日（第 34 條 15 日內；重新召集決議第 32 條 10 日內）
+  status          MeetingStatus       @default(PLANNED)
+  createdAt       DateTime            @default(now())
+  community       Community           @relation(fields: [communityId], references: [id])
+  attendance      MeetingAttendance[]
+  motions         Motion[]
 }
 
 model MeetingAttendance {
@@ -553,13 +579,25 @@ model MeetingAttendance {
 }
 
 model Motion {
-  id          String       @id @default(cuid())
+  id          String            @id @default(cuid())
   meetingId   String
-  seq         Int          @default(1)
+  seq         Int               @default(1)
   title       String
-  description String       @default("")
-  meeting     Meeting      @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  description String            @default("")
+  meeting     Meeting           @relation(fields: [meetingId], references: [id], onDelete: Cascade)
   votes       MotionVote[]
+  objections  MotionObjection[]
+}
+
+// 重新召集會議決議的書面反對意見（條例第 32 條：送達後 7 日內）
+model MotionObjection {
+  motionId String
+  unitId   String
+  filedAt  DateTime @db.Date
+  motion   Motion   @relation(fields: [motionId], references: [id], onDelete: Cascade)
+  unit     Unit     @relation(fields: [unitId], references: [id])
+
+  @@id([motionId, unitId])
 }
 
 enum Vote {
@@ -598,4 +636,185 @@ model DocCounter {
   n      Int    @default(0)
 
   @@id([prefix, ymd])
+}
+
+// ── 欠費催告送達紀錄（訴請法院時須證明已催告）───────────────────────
+model Dunning {
+  id            String    @id @default(cuid())
+  communityId   String
+  unitId        String
+  date          DateTime  @db.Date // 寄出日
+  method        String    @default("掛號") // 掛號／存證信函／親送／公告
+  trackingNo    String    @default("")
+  deliveredDate DateTime? @db.Date // 送達日（回執簽收日）
+  receivedBy    String    @default("") // 簽收人
+  amount        Int       @default(0)
+  periods       String    @default("")
+  note          String    @default("")
+  createdBy     String    @default("")
+  createdAt     DateTime  @default(now())
+  community     Community @relation(fields: [communityId], references: [id])
+  unit          Unit      @relation(fields: [unitId], references: [id])
+
+  @@index([communityId, unitId])
+}
+
+// ── 訪客登記 ─────────────────────────────────────────────────────────
+model Visitor {
+  id          String    @id @default(cuid())
+  communityId String
+  unitId      String?
+  name        String
+  phone       String    @default("")
+  purpose     String    @default("拜訪")
+  headcount   Int       @default(1)
+  plate       String    @default("")
+  badge       String    @default("") // 換證／臨停證號
+  inAt        DateTime  @default(now())
+  outAt       DateTime?
+  createdBy   String    @default("")
+  note        String    @default("")
+  community   Community @relation(fields: [communityId], references: [id])
+  unit        Unit?     @relation(fields: [unitId], references: [id])
+
+  @@index([communityId, inAt])
+}
+
+// ── 住戶意見反映 ─────────────────────────────────────────────────────
+enum FeedbackStatus {
+  OPEN
+  REPLIED
+  CLOSED
+}
+
+model Feedback {
+  id          String         @id @default(cuid())
+  communityId String
+  unitId      String
+  residentId  String?
+  category    String         @default("建議")
+  title       String
+  content     String         @default("")
+  status      FeedbackStatus @default(OPEN)
+  reply       String         @default("")
+  repliedBy   String         @default("")
+  repliedAt   DateTime?
+  createdAt   DateTime       @default(now())
+  community   Community      @relation(fields: [communityId], references: [id])
+  unit        Unit           @relation(fields: [unitId], references: [id])
+  resident    Resident?      @relation(fields: [residentId], references: [id])
+
+  @@index([communityId, status])
+}
+
+// ── 社區文件（規約、使用執照、圖說、會議附件）───────────────────────
+model Document {
+  id           String    @id @default(cuid())
+  communityId  String
+  title        String
+  category     String    @default("規約")
+  fileName     String
+  storedName   String
+  mime         String    @default("application/octet-stream")
+  size         Int       @default(0)
+  forResidents Boolean   @default(true) // 住戶專區看得到（條例第 35 條利害關係人得閱覽）
+  createdBy    String    @default("")
+  createdAt    DateTime  @default(now())
+  community    Community @relation(fields: [communityId], references: [id])
+}
+
+// ── 住戶意見調查（非區權會法定表決）─────────────────────────────────
+model Poll {
+  id          String     @id @default(cuid())
+  communityId String
+  title       String
+  description String     @default("")
+  options     Json // string[]
+  endDate     DateTime   @db.Date
+  showResult  Boolean    @default(true) // 住戶可看結果
+  createdBy   String     @default("")
+  createdAt   DateTime   @default(now())
+  community   Community  @relation(fields: [communityId], references: [id])
+  votes       PollVote[]
+}
+
+model PollVote {
+  pollId     String
+  unitId     String
+  option     Int
+  residentId String?
+  votedAt    DateTime @default(now())
+  poll       Poll     @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  unit       Unit     @relation(fields: [unitId], references: [id])
+
+  @@id([pollId, unitId]) // 一戶一票
+}
+
+// ── 社區財產清冊（條例第 36 條：管委會保管共用部分及財產）────────────
+enum AssetStatus {
+  IN_USE
+  REPAIR
+  IDLE
+  SCRAPPED
+}
+
+model Asset {
+  id           String      @id @default(cuid())
+  communityId  String
+  assetNo      String      @default("")
+  name         String
+  category     String      @default("設備")
+  location     String      @default("")
+  quantity     Int         @default(1)
+  purchaseDate DateTime?   @db.Date
+  cost         Int         @default(0)
+  status       AssetStatus @default(IN_USE)
+  keeper       String      @default("")
+  note         String      @default("")
+  createdAt    DateTime    @default(now())
+  community    Community   @relation(fields: [communityId], references: [id])
+}
+
+// ── 巡邏打卡（巡邏點貼 QR Code，掃描即打卡）──────────────────────────
+model PatrolPoint {
+  id          String      @id @default(cuid())
+  communityId String
+  name        String
+  location    String      @default("")
+  code        String      @unique
+  seq         Int         @default(1)
+  active      Boolean     @default(true)
+  community   Community   @relation(fields: [communityId], references: [id])
+  logs        PatrolLog[]
+}
+
+model PatrolLog {
+  id          String      @id @default(cuid())
+  communityId String
+  pointId     String
+  userName    String
+  note        String      @default("")
+  scannedAt   DateTime    @default(now())
+  community   Community   @relation(fields: [communityId], references: [id])
+  point       PatrolPoint @relation(fields: [pointId], references: [id])
+
+  @@index([communityId, scannedAt])
+}
+
+// ── 銀行入帳匯入（虛擬帳號自動銷帳；同一筆入帳不重複匯入）────────────
+model BankTxn {
+  id          String    @id @default(cuid())
+  communityId String
+  hash        String
+  date        DateTime  @db.Date
+  amount      Int
+  account     String    @default("")
+  memo        String    @default("")
+  unitId      String?
+  receiptNos  String    @default("")
+  createdBy   String    @default("")
+  createdAt   DateTime  @default(now())
+  community   Community @relation(fields: [communityId], references: [id])
+
+  @@unique([communityId, hash])
 }

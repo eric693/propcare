@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Home } from 'lucide-react';
 import api, { errMsg } from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -7,18 +7,19 @@ import { useAuth } from '../context/AuthContext';
 export default function Login() {
   const { user, login } = useAuth();
   const nav = useNavigate();
+  const from = (useLocation().state as { from?: string } | null)?.from ?? '/';
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [demo, setDemo] = useState<{ account: string; password: string } | null>(null);
   useEffect(() => { api.get('/auth/demo').then((r) => setDemo(r.data)).catch(() => {}); }, []);
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to={from} replace />;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true); setErr('');
-    try { await login(username, password); nav('/'); } catch (e) { setErr(errMsg(e)); }
+    try { await login(username, password); nav(from, { replace: true }); } catch (e) { setErr(errMsg(e)); }
     setBusy(false);
   }
 

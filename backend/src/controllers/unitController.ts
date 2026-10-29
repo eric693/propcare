@@ -7,6 +7,7 @@ import { audit } from '../services/common';
 import { HttpError, mgmtFeeOf } from '../services/feeService';
 import { parse } from '../utils/validate';
 import { byLabel } from '../utils/dates';
+import { assignVaCodes } from './communityController';
 
 const actor = (req: AuthRequest) => ({ type: 'staff' as const, id: req.user!.id, name: req.user!.name });
 
@@ -53,6 +54,7 @@ export async function saveUnit(req: AuthRequest, res: Response) {
   } else {
     await prisma.unit.create({ data: { ...data, communityId: req.cid! } });
   }
+  if (!id && req.community!.vaPrefix) await assignVaCodes(req.cid!, req.community!.vaPrefix);
   await audit(req.cid, actor(req), id ? '修改戶別' : '新增戶別', data.label);
   res.status(id ? 200 : 201).json({ ok: true });
 }
@@ -89,6 +91,7 @@ export async function importUnits(req: AuthRequest, res: Response) {
     else { await prisma.unit.create({ data: { ...data, label, communityId: req.cid! } }); created++; }
   }
   await audit(req.cid, actor(req), '批次匯入戶別', `新增 ${created}、更新 ${updated}`);
+  if (created && req.community!.vaPrefix) await assignVaCodes(req.cid!, req.community!.vaPrefix);
   res.json({ created, updated, errors });
 }
 

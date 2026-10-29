@@ -3,6 +3,7 @@
 // 用法：node scripts/smoke-test.mjs   （預設打 http://127.0.0.1:3390/api）
 import 'dotenv/config';
 import bcrypt from 'bcryptjs';
+import fs from 'fs';
 import { PrismaClient } from '@prisma/client';
 
 const API = process.env.API ?? 'http://127.0.0.1:3390/api';
@@ -48,6 +49,10 @@ async function cleanup() {
     await prisma.motionVote.deleteMany({ where: { motion: { meeting: { communityId: id } } } });
     await prisma.meetingAttendance.deleteMany({ where: { meeting: { communityId: id } } });
     await prisma.meeting.deleteMany({ where: { communityId: id } });
+    await prisma.poll.deleteMany({ where: { communityId: id } });
+    await prisma.patrolLog.deleteMany({ where: { communityId: id } });
+    for (const m of ['patrolPoint', 'bankTxn', 'dunning', 'visitor', 'feedback', 'document', 'asset']) await prisma[m].deleteMany({ where: { communityId: id } });
+    fs.rmSync(new URL(`../uploads/${id}`, import.meta.url), { recursive: true, force: true });
     for (const m of ['ledgerEntry', 'feePayment', 'feeBill', 'package', 'booking', 'facility', 'repair', 'announcement', 'inspection', 'contract', 'vendor', 'parkingSpace', 'resident', 'unit', 'userCommunity', 'auditLog']) {
       await prisma[m].deleteMany({ where: { communityId: id } });
     }
@@ -230,6 +235,125 @@ async function main() {
   await call('POST', '/community/deactivate', { token: A, cid: other, body: { confirmName: `zz-smoke-other-${stamp}` } });
   const afterDeact = await call('GET', '/communities', { token: A });
   check('停用的社區不再出現在清單', !afterDeact.some((c) => c.id === other), '');
+
+  // ── 法規：第 32 條異議期、第 34 條會議紀錄期限 ──
+  await call('PUT', `/meetings/${mt.id}`, { token: M, cid, body: { title: '區權會（重新召集）', meetingDate: today, noticeDate: plus(-12), reconvene: true, status: 'HELD' } });
+  let mr = await call('GET', `/meetings/${mt.id}`, { token: M, cid });
+  check('重新召集決議未送達 → 待送達並公告', mr.motions[0].finality?.status === 'NEED_NOTICE', JSON.stringify(mr.motions[0].finality));
+  check('會議紀錄期限提醒（重新召集 10 日）', mr.minutesCheck?.deadline === plus(10) && mr.minutesCheck.ok === false, JSON.stringify(mr.minutesCheck));
+  await call('PUT', `/meetings/${mt.id}`, { token: M, cid, body: { title: '區權會（重新召集）', meetingDate: today, noticeDate: plus(-12), reconvene: true, status: 'HELD', minutesSentDate: today } });
+  mr = await call('PUT', `/meetings/${mt.id}/motions/${mo}/objections`, { token: M, cid, body: { unitIds: [U['A 1F-1'], U['A 1F-2'], U['A 2F-1']] } });
+  check('書面反對 3/4 戶且比例 75% → 決議不成立', mr.motions[0].finality?.status === 'OBJECTED', JSON.stringify(mr.motions[0].finality));
+  mr = await call('PUT', `/meetings/${mt.id}/motions/${mo}/objections`, { token: M, cid, body: { unitIds: [U['A 1F-2']] } });
+  check('反對未過半 → 異議期中', mr.motions[0].finality?.status === 'OBJECTION_PERIOD' && mr.motions[0].objections.length === 1, JSON.stringify(mr.motions[0].finality));
+  const rm = await call('GET', '/resident/meetings', { token: R });
+  check('住戶看不到逐戶反對與權重', rm.every((m) => !m.result || (!('weights' in m.result.quorum) && m.result.motions.every((x) => !('objections' in x)))), JSON.stringify(rm).slice(0, 200));
+
+  // ── 欠費催告標準可設定、催告送達紀錄 ──
+  let arr = await call('GET', '/arrears', { token: M, cid });
+  check('預設欠滿 3 期才列為逾二期', arr.length > 0 && arr.every((x) => !x.overTwo), JSON.stringify(arr.map((x) => [x.count, x.overTwo])));
+  await call('PUT', '/community', { token: A, cid, body: { arrearsPeriods: 1 } });
+  arr = await call('GET', '/arrears', { token: M, cid });
+  check('改成 1 期後列為可催告', arr.every((x) => x.overTwo), JSON.stringify(arr.map((x) => [x.count, x.overTwo])));
+  await call('PUT', '/community', { token: A, cid, body: { arrearsPeriods: 3, arrearsAmount: 100 } });
+  arr = await call('GET', '/arrears', { token: M, cid });
+  check('欠費達相當金額也列為可催告', arr.every((x) => x.overTwo), JSON.stringify(arr.map((x) => [x.amount, x.overTwo])));
+  await call('PUT', '/community', { token: A, cid, body: { arrearsAmount: 0 } });
+  await call('POST', '/dunnings', { token: M, cid, body: { unitId: U['A 2F-1'], method: '存證信函', trackingNo: 'TP123', amount: 2500, periods: period } });
+  const dun = await call('GET', `/dunnings?unitId=${U['A 2F-1']}`, { token: M, cid });
+  await call('PUT', `/dunnings/${dun[0].id}`, { token: M, cid, body: { unitId: U['A 2F-1'], method: '存證信函', trackingNo: 'TP123', deliveredDate: today, receivedBy: '本人' } });
+  check('催告寄送與送達紀錄', dun.length === 1 && (await call('GET', '/dunnings', { token: M, cid }))[0].receivedBy === '本人');
+  await call('POST', '/dunnings', { token: C, cid, body: { unitId: U['A 2F-1'] }, expect: [403], label: '/dunnings（委員唯讀）' });
+
+  // ── 虛擬帳號與銀行入帳匯入 ──
+  await call('PUT', '/community', { token: A, cid, body: { vaPrefix: '123', vaBank: '測試銀行' } });
+  await call('PUT', '/community', { token: A, cid, body: { vaPrefix: 'ab' }, expect: [400], label: '/community（虛擬帳號前綴須為數字）' });
+  const vaUnits = await call('GET', '/units', { token: M, cid });
+  const va = Object.fromEntries(vaUnits.map((u) => [u.label, u.vaCode]));
+  check('每戶產生 14 碼虛擬帳號', vaUnits.every((u) => /^123\d{11}$/.test(u.vaCode)) && new Set(Object.values(va)).size === vaUnits.length, JSON.stringify(va));
+  const meVa = await call('GET', '/resident/me', { token: R });
+  check('住戶看得到自己的虛擬帳號', meVa.vaCode === va['A 1F-1'] && meVa.community.vaBank === '測試銀行', JSON.stringify(meVa).slice(0, 200));
+  const csv = `交易日期,摘要,存入金額,虛擬帳號\n115/${period.slice(5)}/${today.slice(8)},ATM轉入,"1,200",${va['A 2F-1']}\n${today},跨行,99999,${va['A 2F-2']}\n${today},不明款,500,99999999999999`;
+  const pv = await call('POST', '/bank/preview', { token: M, cid, body: { text: csv } });
+  check('入帳明細：民國日期、千分位金額、比對虛擬帳號', pv.rows?.length === 3 && pv.rows[0].date === today && pv.rows[0].amount === 1200 && pv.rows[0].unitLabel === 'A 2F-1' && !pv.rows[2].unitId, JSON.stringify(pv.rows?.[0]));
+  const ap = await call('POST', '/bank/apply', { token: M, cid, body: { rows: pv.rows.slice(0, 2).map((r) => ({ ...r })) } });
+  check('入帳成功沖銷，超過欠費的那筆被擋下', ap.results?.[0].ok === true && ap.results[0].receipts.length >= 1 && ap.results[1].ok === false, JSON.stringify(ap.results));
+  const pv2 = await call('POST', '/bank/preview', { token: M, cid, body: { text: csv } });
+  check('同一筆入帳不會重複匯入', pv2.rows[0].duplicate === true && pv2.rows[1].duplicate === false, JSON.stringify(pv2.rows.map((r) => r.duplicate)));
+  const ap2 = await call('POST', '/bank/apply', { token: M, cid, body: { rows: [pv.rows[0]] } });
+  check('重送已匯入的入帳會被拒絕', ap2.results[0].ok === false, JSON.stringify(ap2.results));
+
+  // ── 訪客、寄放物品 ──
+  await call('POST', '/visitors', { token: M, cid, body: { unitId: U['A 1F-1'], name: '訪客甲', headcount: 2, plate: 'ABC-1234' } });
+  let vis = await call('GET', '/visitors?inside=1', { token: M, cid });
+  check('訪客登記後在場', vis.length === 1 && vis[0].unit.label === 'A 1F-1', JSON.stringify(vis));
+  await call('POST', `/visitors/${vis[0].id}/leave`, { token: M, cid });
+  vis = await call('GET', '/visitors?inside=1', { token: M, cid });
+  check('訪客離開後不在場', vis.length === 0);
+  await call('POST', '/visitors', { token: M, cid, body: { name: '' }, expect: [400], label: '/visitors（姓名必填）' });
+  const dep = await call('POST', '/packages', { token: M, cid, body: { unitId: U['A 1F-1'], kind: 'DEPOSIT', recipient: '朋友小王', depositor: '測試住戶' } });
+  check('寄放物品產生取件碼', dep.packages?.[0]?.kind === 'DEPOSIT' && /^\d+$/.test(dep.packages[0].pickupCode) && dep.packages[0].depositor === '測試住戶', JSON.stringify(dep).slice(0, 200));
+
+  // ── 意見反映 ──
+  const fb = await call('POST', '/resident/feedback', { token: R, body: { category: '噪音', title: '樓上半夜施工', content: '連續三天' } });
+  await call('POST', '/resident/feedback', { token: R, body: { category: '亂寫', title: 'x' }, expect: [400], label: '/resident/feedback（類別不正確）' });
+  const fbs = await call('GET', '/feedback', { token: M, cid });
+  check('管理端看到住戶意見', fbs.some((f) => f.id === fb.id && f.unit.label === 'A 1F-1'));
+  await call('PUT', `/feedback/${fb.id}`, { token: M, cid, body: { reply: '已通知該戶', status: 'REPLIED' } });
+  const myFb = await call('GET', '/resident/feedback', { token: R });
+  check('住戶看到回覆', myFb[0].reply === '已通知該戶' && myFb[0].status === 'REPLIED');
+  await call('DELETE', `/resident/feedback/${fb.id}`, { token: R, expect: [400], label: '/resident/feedback/:id（已回覆不能撤回）' });
+
+  // ── 社區文件 ──
+  const pdf = Buffer.from('%PDF-1.4 test').toString('base64');
+  const doc = await call('POST', '/documents', { token: M, cid, body: { title: '社區規約', category: '規約', fileName: '規約.pdf', mime: 'application/pdf', data: pdf } });
+  await call('POST', '/documents', { token: M, cid, body: { title: '惡意', fileName: 'x.exe', mime: 'application/x-msdownload', data: pdf }, expect: [400], label: '/documents（拒絕執行檔）' });
+  await call('POST', '/documents', { token: M, cid, body: { title: '內部', category: '內部', forResidents: false, fileName: 'a.txt', mime: 'text/plain', data: Buffer.from('internal').toString('base64') } });
+  const rdocs = await call('GET', '/resident/documents', { token: R });
+  check('住戶只看到公開的文件', rdocs.length === 1 && rdocs[0].title === '社區規約', JSON.stringify(rdocs));
+  const fileRes = await fetch(`${API}/resident/documents/${doc.id}/file`, { headers: { Authorization: `Bearer ${R}` } });
+  check('住戶可下載公開文件', fileRes.status === 200 && (await fileRes.text()).startsWith('%PDF'), fileRes.status);
+  const internal = (await call('GET', '/documents', { token: M, cid })).find((d) => !d.forResidents);
+  await call('GET', `/resident/documents/${internal.id}/file`, { token: R, expect: [404], label: '/resident/documents/:id/file（內部文件住戶不能下載）' });
+  await call('DELETE', `/documents/${internal.id}`, { token: M, cid });
+
+  // ── 意見調查（一戶一票）──
+  await call('POST', '/polls', { token: M, cid, body: { title: '中庭要不要裝涼亭', options: ['要', '不要'], endDate: plus(7) } });
+  const poll = (await call('GET', '/polls', { token: M, cid })).polls[0];
+  await call('POST', `/resident/polls/${poll.id}/vote`, { token: R, body: { option: 0 } });
+  await call('POST', `/resident/polls/${poll.id}/vote`, { token: R, body: { option: 1 } });
+  await call('POST', `/resident/polls/${poll.id}/vote`, { token: R, body: { option: 5 }, expect: [400], label: '/resident/polls/:id/vote（選項不存在）' });
+  const rp = await call('GET', '/resident/polls', { token: R });
+  check('一戶一票，可改票', rp[0].mine === 1 && rp[0].total === 1 && rp[0].counts[1] === 1, JSON.stringify(rp[0]));
+  await call('PUT', `/polls/${poll.id}`, { token: M, cid, body: { title: '中庭要不要裝涼亭', options: ['要', '不要', '再議'], endDate: plus(7) }, expect: [400], label: '/polls/:id（已有作答不能改選項）' });
+  await call('POST', '/polls', { token: M, cid, body: { title: '已截止', options: ['a', 'b'], endDate: plus(-1) } });
+  const closed = (await call('GET', '/polls', { token: M, cid })).polls.find((x) => x.title === '已截止');
+  await call('POST', `/resident/polls/${closed.id}/vote`, { token: R, body: { option: 0 }, expect: [400], label: '/resident/polls/:id/vote（已截止）' });
+
+  // ── 財產清冊 ──
+  await call('POST', '/assets', { token: M, cid, body: { assetNo: 'F-001', name: '滅火器', category: '消防', quantity: 12, cost: 9600, purchaseDate: today } });
+  const assets = await call('GET', '/assets', { token: M, cid });
+  await call('PUT', `/assets/${assets[0].id}`, { token: M, cid, body: { ...assets[0], purchaseDate: today, status: 'REPAIR' } });
+  check('財產新增與修改', (await call('GET', '/assets', { token: M, cid }))[0].status === 'REPAIR');
+
+  // ── 巡邏打卡 ──
+  await call('POST', '/patrol/points', { token: M, cid, body: { name: '地下室 B1', seq: 1 } });
+  const pt = (await call('GET', '/patrol', { token: M, cid })).points[0];
+  const scan = await call('POST', '/patrol/scan', { token: M, body: { code: pt.code } });
+  check('掃描巡邏點打卡', scan.point === '地下室 B1');
+  await call('POST', '/patrol/scan', { token: M, body: { code: pt.code }, expect: [409], label: '/patrol/scan（一分鐘內重複）' });
+  await call('POST', '/patrol/scan', { token: M, body: { code: 'nope' }, expect: [404], label: '/patrol/scan（不存在的巡邏點）' });
+  const pl = await call('GET', '/patrol', { token: M, cid });
+  check('巡邏紀錄', pl.logs.length === 1 && pl.logs[0].point.name === '地下室 B1');
+  const delPt = await call('DELETE', `/patrol/points/${pt.id}`, { token: M, cid });
+  check('有紀錄的巡邏點改為停用', delPt.deactivated === true);
+
+  // ── 個資 ──
+  await call('POST', '/resident/privacy', { token: R });
+  check('住戶同意個資告知', !!(await call('GET', '/resident/me', { token: R })).privacyAt);
+  await call('POST', '/export-log', { token: M, cid, body: { what: '戶別住戶', rows: 4 } });
+  const logs = await call('GET', '/audit', { token: M, cid });
+  check('匯出留下稽核紀錄', JSON.stringify(logs).includes('匯出資料'), JSON.stringify(logs).slice(0, 200));
 
 }
 

@@ -110,20 +110,23 @@ export async function arrears(communityId: string, asOf = todayStr()) {
     orderBy: { period: 'asc' },
   });
   const byUnit = new Map<string, {
-    unitId: string; label: string; ownerName: string; contacts: { name: string; phone: string }[];
+    unitId: string; label: string; ownerName: string; vaCode: string; contacts: { name: string; phone: string }[];
     periods: string[]; amount: number; oldest: string;
   }>();
   for (const b of bills) {
     const row = byUnit.get(b.unitId) ?? {
-      unitId: b.unitId, label: b.unit.label, ownerName: b.unit.ownerName,
+      unitId: b.unitId, label: b.unit.label, ownerName: b.unit.ownerName, vaCode: b.unit.vaCode,
       contacts: b.unit.residents.map((r) => ({ name: r.name, phone: r.phone })), periods: [], amount: 0, oldest: b.period,
     };
     row.periods.push(b.period);
     row.amount += b.total - b.paid;
     byUnit.set(b.unitId, row);
   }
+  // 第 21 條「已逾二期或達相當金額」：期數與金額門檻由社區設定（預設欠滿 3 期）
+  const c = await prisma.community.findUnique({ where: { id: communityId }, select: { arrearsPeriods: true, arrearsAmount: true } });
+  const minPeriods = c?.arrearsPeriods || 3, minAmount = c?.arrearsAmount ?? 0;
   return [...byUnit.values()]
-    .map((r) => ({ ...r, count: r.periods.length, overTwo: r.periods.length > 2, monthsSinceOldest: periodDiff(r.oldest, asOf.slice(0, 7)) }))
+    .map((r) => ({ ...r, count: r.periods.length, overTwo: r.periods.length >= minPeriods || (minAmount > 0 && r.amount >= minAmount), monthsSinceOldest: periodDiff(r.oldest, asOf.slice(0, 7)) }))
     .sort((a, b) => b.count - a.count || b.amount - a.amount);
 }
 

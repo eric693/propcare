@@ -1,17 +1,21 @@
 import { Link } from 'react-router-dom';
-import { Bell, Building, CalendarDays, ClipboardCheck, Gavel, Home, Package, Receipt, Smartphone, Wallet, Wrench, Megaphone } from 'lucide-react';
+import { Bell, Building, CalendarDays, ClipboardCheck, Gavel, Home, Package, Receipt, Smartphone, Wallet, Wrench, Megaphone, Landmark, UserCheck, MessageSquare, FolderOpen } from 'lucide-react';
 
 const FEATURES = [
   { icon: Receipt, title: '管理費自動化', body: '依坪數或固定金額每月自動開帳、LINE 繳費提醒、部分繳與多期一次沖銷，收款自動開收據。' },
   { icon: Wallet, title: '公共基金專戶列帳', body: '收款時依規約比例自動提撥公共基金，兩個帳戶分開記帳；支出須委員核准，一鍵產生月報公告。' },
-  { icon: Gavel, title: '區權會出席與表決', body: '開會通知 10 日期限檢查、逐戶簽到與委託出席，依條例第 31、32 條即時判定是否達定額、議案是否通過。' },
+  { icon: Gavel, title: '區權會出席與表決', body: '開會通知 10 日期限檢查、逐戶簽到與委託出席，依條例第 27、31、32 條判定定額與表決（含 1/5 上限、重新召集異議期），提醒會議紀錄 15 日內送達。' },
   { icon: Package, title: '包裹代收', body: '登記即產生取件碼並 LINE 通知住戶，輸入取件碼即可領取，逾期未領每天自動提醒。' },
   { icon: CalendarDays, title: '公設預約', body: '健身房、KTV、交誼廳線上預約，自動控管時段名額、每戶每週上限與可提前天數。' },
   { icon: Wrench, title: '報修派工', body: '住戶手機報修、管理中心派工給廠商，進度與處理說明住戶即時看得到。' },
   { icon: ClipboardCheck, title: '法定檢查申報', body: '消防安全設備檢修申報、公共安全檢查、電梯安檢、水塔清洗預設排程，完成後自動排下一次。' },
-  { icon: Bell, title: '欠費與催告', body: '逾期未繳自動彙整，逾二期標示（條例第 21 條），直接列印催告函。' },
+  { icon: Bell, title: '欠費與催告', body: '逾期未繳自動彙整，催告標準可依規約設定（條例第 21 條），列印民國年催告函並保存掛號送達紀錄。' },
   { icon: Megaphone, title: '社區公告', body: '停水停電、會議公告同步 LINE 推播，看得到已讀人數。' },
   { icon: Building, title: '多社區管理', body: '物業公司一個帳號管理所有社區，總覽各社區收繳率、欠費、待辦與帳戶餘額。' },
+  { icon: Landmark, title: '虛擬帳號自動銷帳', body: '每戶一組專屬繳費帳號，匯入網銀入帳明細即自動沖銷最舊的帳單，同一筆不會重複入帳。' },
+  { icon: UserCheck, title: '訪客與巡邏', body: '訪客登記與在場名單、寄放物品取件碼；巡邏點貼 QR Code，保全掃描即打卡。' },
+  { icon: MessageSquare, title: '意見反映與調查', body: '住戶線上反映問題、管理中心回覆；一戶一票的意見調查，結果即時統計。' },
+  { icon: FolderOpen, title: '文件與財產清冊', body: '規約、圖說、會議紀錄線上查閱（條例第 35 條）；財產清冊方便改選交接。' },
   { icon: Smartphone, title: '住戶手機專區', body: '住戶用手機號碼登入：查帳單與收據、包裹取件碼、預約公設、報修、看財報與會議紀錄。' },
 ];
 
@@ -47,7 +51,7 @@ export default function Intro() {
           </div>
         ))}
       </section>
-      <footer className="text-center text-xs text-gray-400 pb-8">PropCare 物業管家</footer>
+      <footer className="text-center text-xs text-gray-400 pb-8">PropCare 物業管家・<Link to="/privacy" className="hover:underline">個資蒐集告知</Link></footer>
     </div>
   );
 }

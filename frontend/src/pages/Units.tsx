@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
-import { ChevronDown, KeyRound, Pencil, Plus, Trash2, Upload, UserPlus } from 'lucide-react';
+import { ChevronDown, KeyRound, Pencil, Plus, Trash2, Upload, UserPlus, Download } from 'lucide-react';
 import api from '../api/client';
 import { Page } from '../components/Layout';
 import HowTo from '../components/HowTo';
 import { act, Empty, ErrorBox, Field, Filter, FormModal, Loading, matches, SearchBox, Tabs, Toolbar, useLoad } from '../components/ui';
 import { useAuth, useCanWrite } from '../context/AuthContext';
-import { L, money } from '../lib/format';
+import { L, money, downloadCsv } from '../lib/format';
+import { logExport } from '../lib/exportLog';
 import { Resident, Unit } from '../types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -44,6 +45,8 @@ export default function Units() {
             {buildings.length > 1 && <Filter value={building} onChange={setBuilding} all="全部棟別" options={buildings.map((b) => [b, `${b} 棟`])} />}
             <Filter value={occ} onChange={setOcc} all="全部使用狀態" options={L.occupancy} />
             <Filter value={owe} onChange={setOwe} all="全部帳務" options={[['owe', '有欠費'], ['over2', '欠費逾二期'], ['nores', '沒有住戶資料']]} />
+            <button className="btn-secondary" disabled={!shown.length} onClick={() => downloadCsv('戶別住戶', ['戶別', '棟', '樓', '號', '坪數', '區分所有權比例', '所有權人', '使用狀態', '月繳', '虛擬帳號', '住戶', '住戶電話', '欠費期數', '欠費金額'],
+              shown.map((u) => [u.label, u.building, u.floor, u.no, u.area, u.share, u.ownerName, L.occupancy[u.occupancy], u.monthlyFee, u.vaCode, u.residents.map((r) => r.name).join('、'), u.residents.map((r) => r.phone).join('、'), u.owed.count, u.owed.amount]), logExport)}><Download className="w-4 h-4" />匯出 Excel</button>
           </Toolbar>
           {!units.length ? <Empty>還沒有戶別。請按「批次匯入」從 Excel 貼上，或逐戶新增。</Empty> : (
             <div className="card p-0 divide-y divide-gray-50">
@@ -51,7 +54,7 @@ export default function Units() {
               {shown.map((u) => (
                 <div key={u.id}>
                   <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50" onClick={() => setOpen(open === u.id ? null : u.id)}>
-                    <div className="w-28 font-semibold text-sm">{u.label}</div>
+                    <div className="w-28 font-semibold text-sm">{u.label}{u.vaCode && <div className="text-[10px] font-normal font-mono text-gray-400" title="虛擬帳號">{u.vaCode}</div>}</div>
                     <div className="flex-1 min-w-0 text-sm text-gray-600 truncate">{u.residents.map((r) => r.name).join('、') || <span className="text-gray-300">無住戶資料</span>}</div>
                     <div className="hidden sm:block text-xs text-gray-400 w-24 num">{u.area} 坪</div>
                     <div className="hidden sm:block text-xs text-gray-500 w-24 num text-right">月繳 {money(u.monthlyFee)}</div>

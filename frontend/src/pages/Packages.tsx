@@ -65,8 +65,8 @@ export default function Packages() {
               <tr key={p.id}>
                 <td className="whitespace-nowrap">{dt(p.receivedAt)}</td>
                 <td className="font-semibold">{p.unit.label}{p.recipient && <div className="text-xs text-gray-400 font-normal">{p.recipient}</div>}</td>
-                <td><span className={p.kind === 'COLD' ? 'badge-info' : p.kind === 'REGISTERED' ? 'badge-warn' : 'badge-mute'}>{L.pkgKind[p.kind]}</span></td>
-                <td className="text-xs">{p.carrier}<div className="text-gray-400">{p.trackingNo}</div></td>
+                <td><span className={p.kind === 'COLD' || p.kind === 'DEPOSIT' ? 'badge-info' : p.kind === 'REGISTERED' ? 'badge-warn' : 'badge-mute'}>{L.pkgKind[p.kind]}</span></td>
+                <td className="text-xs">{p.kind === 'DEPOSIT' ? <>寄放人 {p.depositor || '—'}<div className="text-gray-400">領取人 {p.recipient || '—'}</div></> : <>{p.carrier}<div className="text-gray-400">{p.trackingNo}</div></>}</td>
                 <td>{p.shelf}</td>
                 <td className="font-mono font-semibold tracking-wider">{p.pickupCode}</td>
                 <td>{overdue ? <span className="badge-bad">逾期未領</span> : <span className={p.status === 'WAITING' ? 'badge-warn' : 'badge-ok'}>{L.pkgStatus[p.status]}</span>}
@@ -91,13 +91,14 @@ function AddForm({ pkg, onClose, onSaved }: { pkg: any; onClose: () => void; onS
   const { cid } = useAuth();
   const { data: units } = useLoad(() => api.get<Unit[]>('/units').then((r) => r.data), [cid]);
   const [f, setF] = useState(pkg.id
-    ? { unitId: pkg.unitId, recipient: pkg.recipient, carrier: pkg.carrier, trackingNo: pkg.trackingNo, kind: pkg.kind, shelf: pkg.shelf, count: '1', note: pkg.note }
-    : { unitId: '', recipient: '', carrier: CARRIERS[0], trackingNo: '', kind: 'PARCEL', shelf: '', count: '1', note: '' });
+    ? { unitId: pkg.unitId, recipient: pkg.recipient, carrier: pkg.carrier, trackingNo: pkg.trackingNo, kind: pkg.kind, shelf: pkg.shelf, count: '1', note: pkg.note, depositor: pkg.depositor ?? '' }
+    : { unitId: '', recipient: '', carrier: CARRIERS[0], trackingNo: '', kind: 'PARCEL', shelf: '', count: '1', note: '', depositor: '' });
+  const deposit = f.kind === 'DEPOSIT';
   const [q, setQ] = useState('');
   const matches = (units ?? []).filter((u) => q && (u.label.includes(q) || u.residents.some((r) => r.name.includes(q)))).slice(0, 8);
   const sel = units?.find((u) => u.id === f.unitId);
   return (
-    <FormModal title={pkg.id ? `編輯包裹（取件碼 ${pkg.pickupCode}）` : '登記代收包裹'} submitText={pkg.id ? '儲存' : '登記並通知'} onClose={onClose} onSubmit={async () => {
+    <FormModal title={pkg.id ? `編輯（取件碼 ${pkg.pickupCode}）` : '登記代收包裹／寄放物品'} submitText={pkg.id ? '儲存' : '登記並通知'} onClose={onClose} onSubmit={async () => {
       if (!f.unitId) throw { response: { data: { error: '請先選擇戶別' } } };
       if (pkg.id) { const { count, ...body } = f; await api.put(`/packages/${pkg.id}`, body); onSaved(); return; }
       const r = await api.post('/packages', { ...f, count: Number(f.count) });
@@ -108,16 +109,18 @@ function AddForm({ pkg, onClose, onSaved }: { pkg: any; onClose: () => void; onS
         {sel ? <div className="flex items-center gap-2"><b>{sel.label}</b><span className="text-sm text-gray-500">{sel.residents.map((r) => r.name).join('、')}</span><button type="button" className="btn-ghost btn-sm ml-auto" onClick={() => { setF({ ...f, unitId: '' }); setQ(''); }}>重選</button></div> : <>
           <input className="input" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="例如 5F-1 或 王" />
           {matches.length > 0 && <div className="mt-1 border border-gray-100 rounded-xl divide-y">{matches.map((u) => (
-            <button type="button" key={u.id} className="w-full text-left px-3 py-2 text-sm hover:bg-brand-50" onClick={() => setF({ ...f, unitId: u.id, recipient: u.residents[0]?.name ?? '' })}>
+            <button type="button" key={u.id} className="w-full text-left px-3 py-2 text-sm hover:bg-brand-50" onClick={() => setF({ ...f, unitId: u.id, ...(deposit ? { depositor: u.residents[0]?.name ?? '' } : { recipient: u.residents[0]?.name ?? '' }) })}>
               <b>{u.label}</b> <span className="text-gray-500">{u.residents.map((r) => r.name).join('、')}</span></button>
           ))}</div>}
         </>}
       </Field>
-      <Field label="收件人"><input className="input" value={f.recipient} onChange={(e) => setF({ ...f, recipient: e.target.value })} /></Field>
-      <Field label="類型"><select className="input" value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value })}>{Object.entries(L.pkgKind).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
-      <Field label="物流"><select className="input" value={f.carrier} onChange={(e) => setF({ ...f, carrier: e.target.value })}>{[...new Set([...CARRIERS, f.carrier])].filter(Boolean).map((c) => <option key={c}>{c}</option>)}</select></Field>
+      <Field label="類型"><select className="input" value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value, ...(e.target.value === 'DEPOSIT' ? { carrier: '', depositor: f.depositor || f.recipient, recipient: '' } : {}) })}>{Object.entries(L.pkgKind).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+      {deposit && <Field label="寄放人"><input className="input" value={f.depositor} onChange={(e) => setF({ ...f, depositor: e.target.value })} /></Field>}
+      <Field label={deposit ? '領取人' : '收件人'}><input className="input" value={f.recipient} onChange={(e) => setF({ ...f, recipient: e.target.value })} /></Field>
+      {deposit && <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2 sm:col-span-2">寄放物品：戶別選寄放的那一戶，系統會把取件碼通知該戶，由他轉給領取人憑碼領取。</p>}
+      {!deposit && <Field label="物流"><select className="input" value={f.carrier} onChange={(e) => setF({ ...f, carrier: e.target.value })}>{[...new Set([...CARRIERS, f.carrier])].filter(Boolean).map((c) => <option key={c}>{c}</option>)}</select></Field>}
       {!pkg.id && <Field label="件數"><input className="input" type="number" min={1} max={20} value={f.count} onChange={(e) => setF({ ...f, count: e.target.value })} /></Field>}
-      <Field label="單號（選填）"><input className="input" value={f.trackingNo} onChange={(e) => setF({ ...f, trackingNo: e.target.value })} /></Field>
+      {!deposit && <Field label="單號（選填）"><input className="input" value={f.trackingNo} onChange={(e) => setF({ ...f, trackingNo: e.target.value })} /></Field>}
       <Field label="放置位置"><input className="input" placeholder="A-3" value={f.shelf} onChange={(e) => setF({ ...f, shelf: e.target.value })} /></Field>
       <Field label="備註" full><input className="input" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
     </FormModal>

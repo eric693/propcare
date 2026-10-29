@@ -54,6 +54,12 @@ export function CommunitySettings() {
         <Field label="自動開帳日（0＝不自動）" hint="每月這天 08:00 自動開立當月帳單並 LINE 通知">{inp('autoBillDay', 'number')}</Field>
         <Field label="到期前幾天 LINE 提醒（0＝不提醒）">{inp('remindDaysBefore', 'number')}</Field>
         <Field label="繳費帳戶（顯示於帳單與催告函）" full>{inp('bankInfo')}</Field>
+        <Field label="虛擬帳號銀行" hint="例如：玉山銀行 808">{inp('vaBank')}</Field>
+        <Field label="虛擬帳號前綴（銀行核發，3～10 位數字）" hint="設定後每戶自動產生 14 碼專屬繳費帳號，可匯入入帳明細自動銷帳">{inp('vaPrefix')}</Field>
+      </Section>
+      <Section title="欠費催告標準（條例第 21 條）">
+        <Field label="欠繳達幾期列為可催告" hint="條文為「已逾二期或達相當金額」；預設欠滿 3 期，可依規約或管委會決議改為 2 期">{inp('arrearsPeriods', 'number')}</Field>
+        <Field label="或欠費達多少元（0＝不使用）" hint="「相當金額」建議以規約或區權會決議明訂">{inp('arrearsAmount', 'number')}</Field>
       </Section>
       <Section title="帳務期初">
         <Field label="管理費帳戶期初餘額">{inp('openingMgmt', 'number')}</Field>

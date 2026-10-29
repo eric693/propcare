@@ -4,8 +4,8 @@ import { prisma } from '../prisma';
 import { AuthRequest } from '../middleware/auth';
 import { audit } from '../services/common';
 import { HttpError } from '../services/feeService';
-import { meetingResult, noticeCheck } from '../services/meetingService';
-import { dateStr, toDate } from '../utils/dates';
+import { meetingResult, minutesCheck, noticeCheck } from '../services/meetingService';
+import { dateStr, toDate, todayStr } from '../utils/dates';
 import { parse, zDate, zTime } from '../utils/validate';
 
 const actor = (req: AuthRequest) => ({ type: 'staff' as const, id: req.user!.id, name: req.user!.name });
@@ -15,7 +15,7 @@ export async function listMeetings(req: AuthRequest, res: Response) {
     where: { communityId: req.cid! }, orderBy: { meetingDate: 'desc' },
     include: { _count: { select: { attendance: true, motions: true } } },
   });
-  res.json(list.map((m) => ({ ...m, meetingDate: dateStr(m.meetingDate), noticeDate: dateStr(m.noticeDate), notice: noticeCheck(m) })));
+  res.json(list.map((m) => ({ ...m, meetingDate: dateStr(m.meetingDate), noticeDate: dateStr(m.noticeDate), minutesSentDate: dateStr(m.minutesSentDate), notice: noticeCheck(m), minutesCheck: minutesCheck(m) })));
 }
 
 const meetingSchema = z.object({
@@ -26,13 +26,14 @@ const meetingSchema = z.object({
   location: z.string().trim().max(100).default(''),
   noticeDate: z.union([zDate, z.literal('')]).default(''),
   agenda: z.string().trim().max(10000).default(''), minutes: z.string().trim().max(50000).default(''),
+  minutesSentDate: z.union([zDate, z.literal('')]).default(''),
   status: z.enum(['PLANNED', 'HELD', 'CANCELLED']).default('PLANNED'),
 });
 
 export async function saveMeeting(req: AuthRequest, res: Response) {
   const id = req.params.id;
   const b = parse(meetingSchema, req.body);
-  const data = { ...b, meetingDate: toDate(b.meetingDate), noticeDate: b.noticeDate ? toDate(b.noticeDate) : null };
+  const data = { ...b, meetingDate: toDate(b.meetingDate), noticeDate: b.noticeDate ? toDate(b.noticeDate) : null, minutesSentDate: b.minutesSentDate ? toDate(b.minutesSentDate) : null };
   let m;
   if (id) {
     if (!(await prisma.meeting.findFirst({ where: { id, communityId: req.cid! } }))) throw new HttpError(404, '找不到會議');
@@ -104,5 +105,20 @@ export async function setVotes(req: AuthRequest, res: Response) {
     if (!present.has(unitId)) throw new HttpError(400, '未簽到出席的戶別不能投票');
     await prisma.motionVote.upsert({ where: { motionId_unitId: { motionId: mo.id, unitId } }, create: { motionId: mo.id, unitId, vote }, update: { vote } });
   }
+  res.json(await meetingResult(mo.meetingId, req.cid!));
+}
+
+/** 登錄重新召集決議的書面反對意見（第 32 條），整批覆寫 */
+export async function setObjections(req: AuthRequest, res: Response) {
+  const b = parse(z.object({ unitIds: z.array(z.string()).max(5000), filedAt: zDate.default(todayStr()) }), req.body);
+  const mo = await prisma.motion.findFirst({ where: { id: req.params.motionId, meetingId: req.params.id, meeting: { communityId: req.cid! } }, include: { meeting: true } });
+  if (!mo) throw new HttpError(404, '找不到議案');
+  if (!mo.meeting.reconvene) throw new HttpError(400, '只有重新召集會議的決議需要受理書面反對');
+  const valid = await prisma.unit.findMany({ where: { id: { in: b.unitIds }, communityId: req.cid! }, select: { id: true } });
+  await prisma.$transaction([
+    prisma.motionObjection.deleteMany({ where: { motionId: mo.id, unitId: { notIn: valid.map((u) => u.id) } } }),
+    ...valid.map((u) => prisma.motionObjection.upsert({ where: { motionId_unitId: { motionId: mo.id, unitId: u.id } }, create: { motionId: mo.id, unitId: u.id, filedAt: toDate(b.filedAt) }, update: {} })),
+  ]);
+  await audit(req.cid, actor(req), '登錄書面反對', `${mo.title}：${valid.length} 戶`);
   res.json(await meetingResult(mo.meetingId, req.cid!));
 }

@@ -3,11 +3,13 @@ import { Link, Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { Bell, CalendarDays, ChevronRight, Home, LogOut, Megaphone, Package, Receipt, User, Wrench } from 'lucide-react';
 import api, { errMsg, rapi, RESIDENT_TOKEN } from '../../api/client';
 import { Empty, ErrorBox, Field, Filter, FormModal, Loading, matches, SearchBox, Tabs, toast, useLoad } from '../../components/ui';
-import { expenseByCategory, PieChart } from '../../components/charts';
+import { BarChart, expenseByCategory, PieChart } from '../../components/charts';
+import { PRIVACY_ITEMS } from '../Privacy';
+import { FEEDBACK_CATEGORIES, fileSize, openFile } from '../../lib/shared';
 import { addDays, d10, dt, L, money, thisMonth, addMonth, today, pct } from '../../lib/format';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-interface RMe { id: string; name: string; phone: string; relation: string; unit: { id: string; label: string }; community: { id: string; name: string; phone: string; bankInfo: string }; mustChangePassword: boolean; lineBound: boolean; lineEnabled: boolean }
+interface RMe { id: string; name: string; phone: string; relation: string; unit: { id: string; label: string }; community: { id: string; name: string; phone: string; bankInfo: string; vaBank: string }; vaCode: string; privacyAt: string | null; mustChangePassword: boolean; lineBound: boolean; lineEnabled: boolean }
 const Ctx = createContext<{ me: RMe | null; reload: () => void }>({ me: null, reload: () => {} });
 const useMe = () => useContext(Ctx);
 
@@ -57,7 +59,7 @@ export function ResidentLogin() {
             <button type="button" className="ml-2 text-brand font-semibold" onClick={() => { setPhone(demo.residentPhone); setPassword(demo.residentPassword); }}>帶入</button>
           </div>}
         </>}
-        <div className="mt-4 text-sm text-right"><Link to="/login" className="text-gray-400">管理人員登入</Link></div>
+        <div className="mt-4 text-sm flex justify-between"><Link to="/privacy" className="text-gray-400">個資蒐集告知</Link><Link to="/login" className="text-gray-400">管理人員登入</Link></div>
       </form>
     </div>
   );
@@ -78,6 +80,7 @@ export function ResidentLayout() {
   if (error) return <div className="p-6"><ErrorBox error={error} /></div>;
   if (!me) return <Loading />;
   if (me.mustChangePassword) return <ForceChange onDone={reload} />;
+  if (!me.privacyAt) return <PrivacyConsent onDone={reload} />;
   return (
     <Ctx.Provider value={{ me, reload }}>
       <div className="min-h-[100dvh] bg-warm pb-20">
@@ -97,6 +100,24 @@ export function ResidentLayout() {
         </nav>
       </div>
     </Ctx.Provider>
+  );
+}
+
+/** 個資法第 8 條：蒐集前告知；住戶確認後記錄時間，只需一次 */
+function PrivacyConsent({ onDone }: { onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="min-h-[100dvh] flex items-center justify-center p-4 bg-warm">
+      <div className="card w-full max-w-md p-5">
+        <h2 className="font-bold text-lg mb-1">個人資料蒐集告知</h2>
+        <p className="text-sm text-gray-500 mb-3">使用住戶專區前，請先閱讀以下事項（個人資料保護法第 8 條）。</p>
+        <div className="max-h-[55vh] overflow-y-auto divide-y divide-gray-100 border border-gray-100 rounded-xl mb-4">
+          {PRIVACY_ITEMS.map(([k, v]) => <div key={k} className="px-3 py-2"><div className="text-xs font-semibold text-gray-700">{k}</div><div className="text-xs text-gray-600 leading-relaxed">{v}</div></div>)}
+        </div>
+        <button className="btn-primary w-full" disabled={busy} onClick={async () => { setBusy(true); try { await rapi.post('/resident/privacy'); onDone(); } catch (e) { toast(errMsg(e), true); setBusy(false); } }}>我已閱讀並了解</button>
+        <button className="btn-ghost w-full mt-2" onClick={() => { localStorage.removeItem(RESIDENT_TOKEN); window.location.href = '/r/login'; }}>不同意，登出</button>
+      </div>
+    </div>
   );
 }
 
@@ -182,7 +203,15 @@ export function RBills() {
     <>
       <h2 className="font-bold mb-3">管理費帳單</h2>
       <Tabs value={st} onChange={setSt} items={[['all', '全部', data.length], ['owe', '未繳清', data.filter((b) => b.status !== 'PAID').length], ['paid', '已繳清']]} />
-      {me?.community.bankInfo && <div className="card text-xs text-gray-600 mb-3">繳費帳戶：{me.community.bankInfo}<br />繳費後若有疑問，請洽管理中心 {me.community.phone}</div>}
+      {me?.vaCode ? (
+        <div className="card mb-3 border-brand/30 bg-brand-50">
+          <div className="text-xs text-gray-500">您的專屬繳費帳號（ATM／網銀轉帳，入帳後自動銷帳）</div>
+          <div className="text-xs text-gray-600 mt-1">{me.community.vaBank}</div>
+          <div className="flex items-center gap-2"><b className="font-mono text-xl tracking-wider">{me.vaCode.replace(/(\d{4})(?=\d)/g, '$1 ')}</b>
+            <button className="btn-ghost btn-sm ml-auto" onClick={() => navigator.clipboard?.writeText(me.vaCode).then(() => toast('已複製帳號'))}>複製</button></div>
+          <div className="text-[11px] text-gray-400 mt-1">繳費後若有疑問，請洽管理中心 {me.community.phone}</div>
+        </div>
+      ) : me?.community.bankInfo && <div className="card text-xs text-gray-600 mb-3">繳費帳戶：{me.community.bankInfo}<br />繳費後若有疑問，請洽管理中心 {me.community.phone}</div>}
       {!list.length ? <Empty>{data.length ? '沒有符合的帳單' : '還沒有帳單'}</Empty> : list.map((b) => (
         <div key={b.id} className="card mb-2">
           <div className="flex items-center"><b>{b.period}</b><span className={`${L.billCls[b.status]} ml-2`}>{L.bill[b.status]}</span><span className="ml-auto font-bold num">{money(b.total)} 元</span></div>
@@ -242,6 +271,45 @@ export function RBooking() {
 
 const CATS = ['水電', '電梯', '門禁對講', '消防', '照明', '漏水', '公設損壞', '清潔環境', '停車場', '其他'];
 export function RRepairs() {
+  const [tab, setTab] = useState<'repair' | 'feedback'>('repair');
+  return (
+    <>
+      <Tabs value={tab} onChange={setTab} items={[['repair', '報修'], ['feedback', '意見反映']]} />
+      {tab === 'repair' ? <RRepairList /> : <RFeedback />}
+    </>
+  );
+}
+
+function RFeedback() {
+  const { data, error, reload } = useLoad(() => rapi.get<any[]>('/resident/feedback').then((r) => r.data), []);
+  const [adding, setAdding] = useState(false);
+  const empty = { category: '建議', title: '', content: '' };
+  const [f, setF] = useState(empty);
+  return (
+    <>
+      <div className="flex items-center mb-3"><h2 className="font-bold">意見反映</h2><button className="btn-primary btn-sm ml-auto" onClick={() => setAdding(true)}>我要反映</button></div>
+      <ErrorBox error={error} />
+      {!data ? <Loading /> : !data.length ? <Empty>有建議或問題（噪音、環境、停車…）都可以在這裡告訴管理中心</Empty> : data.map((x) => (
+        <div key={x.id} className="card mb-2">
+          <div className="flex items-center gap-2"><span className="badge-mute">{x.category}</span><b className="flex-1 text-sm truncate">{x.title}</b><span className={x.status === 'OPEN' ? 'badge-warn' : x.status === 'REPLIED' ? 'badge-info' : 'badge-ok'}>{L.feedbackStatus[x.status]}</span></div>
+          <div className="text-xs text-gray-400 mt-0.5">{dt(x.createdAt)}</div>
+          {x.content && <p className="text-sm text-gray-600 whitespace-pre-wrap mt-1">{x.content}</p>}
+          {x.reply && <div className="mt-2 text-sm bg-brand-50 rounded-xl px-3 py-2"><div className="text-xs text-brand mb-0.5">管理中心回覆</div><div className="whitespace-pre-wrap">{x.reply}</div></div>}
+          {x.status === 'OPEN' && !x.reply && <button className="btn-ghost btn-sm text-red-500 mt-1" onClick={async () => { if (confirm('撤回這則意見？')) { try { await rapi.delete(`/resident/feedback/${x.id}`); toast('已撤回'); reload(); } catch (e) { toast(errMsg(e), true); } } }}>撤回</button>}
+        </div>
+      ))}
+      {adding && (
+        <FormModal title="我要反映" submitText="送出" onClose={() => setAdding(false)} onSubmit={async () => { await rapi.post('/resident/feedback', f); toast('已送出，管理中心回覆後會通知您'); setF(empty); reload(); }}>
+          <Field label="類別"><select className="input" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{FEEDBACK_CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select></Field>
+          <Field label="主旨" full><input className="input" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} /></Field>
+          <Field label="內容" full><textarea className="input h-28" value={f.content} onChange={(e) => setF({ ...f, content: e.target.value })} /></Field>
+        </FormModal>
+      )}
+    </>
+  );
+}
+
+function RRepairList() {
   const { me } = useMe();
   const { data, error, reload } = useLoad(() => rapi.get<any[]>('/resident/repairs').then((r) => r.data), []);
   const [adding, setAdding] = useState<any>(null);
@@ -285,13 +353,47 @@ export function RRepairs() {
 }
 
 export function RNews() {
-  const [tab, setTab] = useState<'ann' | 'report' | 'meetings'>('ann');
+  const [tab, setTab] = useState<'ann' | 'report' | 'meetings' | 'docs' | 'polls'>('ann');
   return (
     <>
-      <Tabs value={tab} onChange={setTab} items={[['ann', '公告'], ['report', '社區財報'], ['meetings', '會議']]} />
-      {tab === 'ann' ? <RAnnouncements /> : tab === 'report' ? <RReport /> : <RMeetings />}
+      <Tabs value={tab} onChange={setTab} items={[['ann', '公告'], ['polls', '調查'], ['report', '財報'], ['meetings', '會議'], ['docs', '文件']]} />
+      {tab === 'ann' ? <RAnnouncements /> : tab === 'report' ? <RReport /> : tab === 'meetings' ? <RMeetings /> : tab === 'docs' ? <RDocs /> : <RPolls />}
     </>
   );
+}
+
+function RDocs() {
+  const { data, error } = useLoad(() => rapi.get<any[]>('/resident/documents').then((r) => r.data), []);
+  if (error) return <ErrorBox error={error} />;
+  if (!data) return <Loading />;
+  if (!data.length) return <Empty>社區尚未上傳文件</Empty>;
+  return <div className="card divide-y divide-gray-50 p-0">{data.map((d) => (
+    <button key={d.id} className="w-full text-left px-4 py-3 hover:bg-gray-50" onClick={() => openFile(`/resident/documents/${d.id}/file`, rapi)}>
+      <div className="flex items-center gap-2"><span className="badge-mute">{d.category}</span><b className="text-sm flex-1 truncate">{d.title}</b><span className="text-xs text-gray-400">{fileSize(d.size)}</span></div>
+    </button>
+  ))}</div>;
+}
+
+function RPolls() {
+  const { data, error, reload } = useLoad(() => rapi.get<any[]>('/resident/polls').then((r) => r.data), []);
+  if (error) return <ErrorBox error={error} />;
+  if (!data) return <Loading />;
+  if (!data.length) return <Empty>目前沒有意見調查</Empty>;
+  const vote = async (id: string, option: number) => { try { await rapi.post(`/resident/polls/${id}/vote`, { option }); toast('已送出'); reload(); } catch (e) { toast(errMsg(e), true); } };
+  return <>{data.map((p) => (
+    <div key={p.id} className="card mb-3">
+      <div className="text-xs mb-1"><span className={p.open ? 'badge-ok' : 'badge-mute'}>{p.open ? `${p.endDate} 截止` : '已截止'}</span></div>
+      <h3 className="font-semibold">{p.title}</h3>
+      {p.description && <p className="text-sm text-gray-600 whitespace-pre-wrap">{p.description}</p>}
+      <div className="space-y-2 mt-3">{p.options.map((o: string, i: number) => (
+        <button key={i} disabled={!p.open} onClick={() => vote(p.id, i)} className={`w-full text-left rounded-xl border px-3 py-2 text-sm flex items-center ${p.mine === i ? 'border-brand bg-brand-50 font-semibold' : 'border-gray-200'} disabled:opacity-80`}>
+          <span className="flex-1">{o}{p.mine === i && '（您的選擇）'}</span>{p.counts && <span className="text-xs text-gray-500">{p.counts[i]} 戶</span>}
+        </button>
+      ))}</div>
+      {p.counts && p.total > 0 && <div className="mt-3"><BarChart labels={p.options} series={[{ name: '戶數', values: p.counts }]} format={(v) => `${v} 戶`} height={140} integer /></div>}
+      <p className="text-[11px] text-gray-400 mt-2">一戶一票，截止前可以改選。本調查僅供參考，不是區分所有權人會議的法定表決。</p>
+    </div>
+  ))}</>;
 }
 
 function RAnnouncements() {
@@ -358,8 +460,8 @@ function RMeetings() {
       <div className="font-semibold mt-1">{m.title}</div>
       <div className="text-xs text-gray-500">{m.meetingDate} {m.meetingTime}・{m.location}</div>
       {m.agenda && <p className="text-xs text-gray-600 whitespace-pre-wrap mt-2">{m.agenda}</p>}
-      {m.result && m.kind === 'OWNERS' && <div className="text-xs mt-2 bg-gray-50 rounded-lg p-2">出席 {m.result.quorum.attendUnits} / {m.result.quorum.totalUnits} 戶（{pct(m.result.quorum.attendRate)}）
-        {m.result.motions.map((mo: any) => <div key={mo.id}>第 {mo.seq} 案 {mo.title}：<b className={mo.result.passed ? 'text-green-700' : 'text-red-600'}>{mo.result.passed ? '通過' : '未通過'}</b>（同意 {pct(mo.result.yesRate)}）</div>)}</div>}
+      {m.result && m.kind === 'OWNERS' && <div className="text-xs mt-2 bg-gray-50 rounded-lg p-2">出席 {Math.round(m.result.quorum.attendUnits * 100) / 100} / {m.result.quorum.totalUnits} 戶（{pct(m.result.quorum.attendRate)}）
+        {m.result.motions.map((mo: any) => <div key={mo.id}>第 {mo.seq} 案 {mo.title}：<b className={mo.result.passed && mo.finality?.status !== 'OBJECTED' ? 'text-green-700' : 'text-red-600'}>{!mo.result.passed ? '未通過' : !mo.finality ? '通過' : mo.finality.status === 'FINAL' ? '通過（決議成立）' : mo.finality.status === 'OBJECTED' ? '不成立' : `通過（異議期至 ${mo.finality.deadline}）`}</b>（同意 {pct(mo.result.yesRate)}）</div>)}</div>}
       {m.minutes && <details className="mt-2 text-xs"><summary className="text-brand cursor-pointer">會議紀錄</summary><p className="whitespace-pre-wrap text-gray-600 mt-1">{m.minutes}</p></details>}
     </div>
   ))}</>;
@@ -389,6 +491,7 @@ export function RMe() {
         <input className="input mb-2" type="password" placeholder="新密碼（至少 8 碼）" value={pw.newPassword} onChange={(e) => setPw({ ...pw, newPassword: e.target.value })} />
         <button className="btn-primary" onClick={async () => { try { await rapi.put('/resident/password', pw); setPw({ currentPassword: '', newPassword: '' }); toast('密碼已更新'); } catch (e) { toast(errMsg(e), true); } }}>更新密碼</button>
       </div>
+      <div className="text-center text-xs mb-3"><Link to="/privacy" className="text-gray-400">個資蒐集告知事項</Link></div>
       <button className="btn-ghost w-full" onClick={() => { localStorage.removeItem(RESIDENT_TOKEN); nav('/r/login'); }}><LogOut className="w-4 h-4" />登出</button>
     </>
   );

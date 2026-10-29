@@ -3,6 +3,7 @@ import { ReactNode, Suspense, useEffect, useState } from 'react';
 import {
   Building2, CalendarDays, ClipboardCheck, FileText, Gavel, Home, LayoutDashboard, LogOut, Megaphone, Menu,
   Package, Receipt, Settings, ShieldCheck, Users, Wallet, Wrench, X, MoreHorizontal, Building,
+  UserCheck, Footprints, MessageSquare, FolderOpen, Boxes,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { Loading } from './ui';
@@ -16,6 +17,9 @@ const GROUPS: { label: string; items: Item[] }[] = [
     { to: '/repairs', label: '報修', icon: Wrench },
     { to: '/facilities', label: '公設預約', icon: CalendarDays },
     { to: '/announcements', label: '公告', icon: Megaphone },
+    { to: '/visitors', label: '訪客登記', icon: UserCheck },
+    { to: '/patrol', label: '巡邏打卡', icon: Footprints },
+    { to: '/feedback', label: '住戶意見', icon: MessageSquare },
   ] },
   { label: '財務', items: [
     { to: '/fees', label: '管理費', icon: Receipt },
@@ -25,6 +29,8 @@ const GROUPS: { label: string; items: Item[] }[] = [
     { to: '/units', label: '戶別與住戶', icon: Users },
     { to: '/meetings', label: '會議與表決', icon: Gavel },
     { to: '/vendors', label: '廠商與法定檢查', icon: ClipboardCheck },
+    { to: '/documents', label: '文件與意見調查', icon: FolderOpen },
+    { to: '/assets', label: '財產清冊', icon: Boxes },
   ] },
   { label: '物業公司', items: [
     { to: '/overview', label: '公司總覽', icon: Building },

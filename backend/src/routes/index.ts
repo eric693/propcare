@@ -10,6 +10,7 @@ import * as svc from '../controllers/serviceController';
 import * as vendor from '../controllers/vendorController';
 import * as meet from '../controllers/meetingController';
 import * as res from '../controllers/residentController';
+import * as x from '../controllers/extraController';
 
 const router = Router();
 
@@ -40,6 +41,14 @@ R.delete('/repairs/:id', res.residentDeleteRepair);
 R.get('/report', res.residentReport);
 R.get('/meetings', res.residentMeetings);
 R.post('/line/code', res.residentLineCode);
+R.post('/privacy', x.residentPrivacy);
+R.get('/feedback', x.residentFeedback);
+R.post('/feedback', x.residentCreateFeedback);
+R.delete('/feedback/:id', x.residentDeleteFeedback);
+R.get('/documents', x.residentDocuments);
+R.get('/documents/:id/file', x.residentDownloadDocument);
+R.get('/polls', x.residentPolls);
+R.post('/polls/:id/vote', x.residentVote);
 R.delete('/line', res.residentLineUnbind);
 router.use('/resident', R);
 
@@ -56,6 +65,7 @@ router.get('/users', requireAdmin, comm.listUsers);
 router.post('/users', requireAdmin, comm.saveUser);
 router.put('/users/:id', requireAdmin, comm.saveUser);
 router.delete('/users/:id', requireAdmin, comm.deleteUser);
+router.post('/patrol/scan', x.patrolScan);   // 巡邏點屬哪個社區由 QR Code 決定
 
 // ── 員工端：社區範圍（X-Community 標頭）──
 const C = Router();
@@ -146,6 +156,40 @@ C.post('/meetings/:id/motions', canWrite, meet.saveMotion);
 C.put('/meetings/:id/motions/:motionId', canWrite, meet.saveMotion);
 C.delete('/meetings/:id/motions/:motionId', canWrite, meet.deleteMotion);
 C.put('/meetings/:id/motions/:motionId/votes', canWrite, meet.setVotes);
+C.put('/meetings/:id/motions/:motionId/objections', canWrite, meet.setObjections);
+
+C.get('/dunnings', x.listDunnings);
+C.post('/dunnings', canWrite, x.saveDunning);
+C.put('/dunnings/:id', canWrite, x.saveDunning);
+C.delete('/dunnings/:id', canWrite, x.deleteDunning);
+C.post('/bank/preview', canWrite, x.bankPreview);
+C.post('/bank/apply', canWrite, x.bankApply);
+C.get('/visitors', x.listVisitors);
+C.post('/visitors', canWrite, x.saveVisitor);
+C.put('/visitors/:id', canWrite, x.saveVisitor);
+C.post('/visitors/:id/leave', canWrite, x.visitorLeave);
+C.delete('/visitors/:id', canWrite, x.deleteVisitor);
+C.get('/feedback', x.listFeedback);
+C.put('/feedback/:id', canWrite, x.replyFeedback);
+C.delete('/feedback/:id', canWrite, x.deleteFeedback);
+C.get('/documents', x.listDocuments);
+C.post('/documents', canWrite, x.uploadDocument);
+C.put('/documents/:id', canWrite, x.updateDocument);
+C.delete('/documents/:id', canWrite, x.deleteDocument);
+C.get('/documents/:id/file', x.downloadDocument);
+C.get('/polls', x.listPolls);
+C.post('/polls', canWrite, x.savePoll);
+C.put('/polls/:id', canWrite, x.savePoll);
+C.delete('/polls/:id', canWrite, x.deletePoll);
+C.get('/assets', x.listAssets);
+C.post('/assets', canWrite, x.saveAsset);
+C.put('/assets/:id', canWrite, x.saveAsset);
+C.delete('/assets/:id', canWrite, x.deleteAsset);
+C.get('/patrol', x.listPatrol);
+C.post('/patrol/points', canWrite, x.savePatrolPoint);
+C.put('/patrol/points/:id', canWrite, x.savePatrolPoint);
+C.delete('/patrol/points/:id', canWrite, x.deletePatrolPoint);
+C.post('/export-log', x.logExport);
 
 router.use(C);
 

@@ -10,7 +10,7 @@ import { addDays, toDate, todayStr } from '../utils/dates';
 import { parse, zDate, zTime } from '../utils/validate';
 
 const actor = (req: AuthRequest) => ({ type: 'staff' as const, id: req.user!.id, name: req.user!.name });
-const PKG_KIND: Record<string, string> = { PARCEL: '包裹', MAIL: '信件', REGISTERED: '掛號信', COLD: '冷藏包裹', LARGE: '大型包裹' };
+const PKG_KIND: Record<string, string> = { PARCEL: '包裹', MAIL: '信件', REGISTERED: '掛號信', COLD: '冷藏包裹', LARGE: '大型包裹', DEPOSIT: '寄放物品' };
 
 // ── 包裹代收 ─────────────────────────────────────────────────────────
 
@@ -31,8 +31,9 @@ export async function createPackage(req: AuthRequest, res: Response) {
   const b = parse(z.object({
     unitId: z.string().min(1, '請選擇戶別'), recipient: z.string().trim().max(50).default(''),
     carrier: z.string().trim().max(30).default(''), trackingNo: z.string().trim().max(50).default(''),
-    kind: z.enum(['PARCEL', 'MAIL', 'REGISTERED', 'COLD', 'LARGE']).default('PARCEL'),
+    kind: z.enum(['PARCEL', 'MAIL', 'REGISTERED', 'COLD', 'LARGE', 'DEPOSIT']).default('PARCEL'),
     shelf: z.string().trim().max(20).default(''), note: z.string().trim().max(200).default(''),
+    depositor: z.string().trim().max(50).default(''),
     count: z.coerce.number().int().min(1).max(20).default(1),
   }), req.body);
   const unit = await prisma.unit.findFirst({ where: { id: b.unitId, communityId: req.cid!, active: true } });
@@ -43,7 +44,10 @@ export async function createPackage(req: AuthRequest, res: Response) {
     created.push(await prisma.package.create({ data: { ...data, communityId: req.cid!, pickupCode: await newPickupCode(req.cid!), receivedBy: req.user!.name } }));
   }
   const codes = created.map((p) => p.pickupCode).join('、');
-  const n = await notifyUnit(unit.id, `【${req.community!.name}】管理中心已代收您的${PKG_KIND[b.kind]} ${count} 件${b.carrier ? `（${b.carrier}）` : ''}\n取件碼：${codes}\n請攜帶取件碼至管理中心領取。`);
+  // 寄放物品：通知寄放的這一戶，請他把取件碼轉給領取人
+  const n = await notifyUnit(unit.id, b.kind === 'DEPOSIT'
+    ? `【${req.community!.name}】您寄放在管理中心的物品已登記${b.recipient ? `，領取人：${b.recipient}` : ''}\n取件碼：${codes}\n請將取件碼告知領取人，憑碼領取。`
+    : `【${req.community!.name}】管理中心已代收您的${PKG_KIND[b.kind]} ${count} 件${b.carrier ? `（${b.carrier}）` : ''}\n取件碼：${codes}\n請攜帶取件碼至管理中心領取。`);
   if (n) await prisma.package.updateMany({ where: { id: { in: created.map((p) => p.id) } }, data: { notified: true } });
   res.status(201).json({ packages: created, notified: n });
 }
@@ -65,8 +69,9 @@ export async function updatePackage(req: AuthRequest, res: Response) {
   const b = parse(z.object({
     unitId: z.string().min(1, '請選擇戶別'), recipient: z.string().trim().max(50).default(''),
     carrier: z.string().trim().max(30).default(''), trackingNo: z.string().trim().max(50).default(''),
-    kind: z.enum(['PARCEL', 'MAIL', 'REGISTERED', 'COLD', 'LARGE']).default('PARCEL'),
+    kind: z.enum(['PARCEL', 'MAIL', 'REGISTERED', 'COLD', 'LARGE', 'DEPOSIT']).default('PARCEL'),
     shelf: z.string().trim().max(20).default(''), note: z.string().trim().max(200).default(''),
+    depositor: z.string().trim().max(50).default(''),
   }), req.body);
   const p = await prisma.package.findFirst({ where: { id: req.params.id, communityId: req.cid! } });
   if (!p) throw new HttpError(404, '找不到包裹');
