@@ -67,6 +67,10 @@ async function main() {
   check('總幹事只看得到指派的社區', me.communities?.length === 1 && me.communities[0].id === cid, JSON.stringify(me.communities));
   await call('GET', '/dashboard', { token: M, cid: other, expect: [403], label: '/dashboard（未指派的社區應拒絕）' });
   await call('GET', '/dashboard', { token: M, expect: [400], label: '/dashboard（未帶社區）' });
+  const emptyDash = await call('GET', '/dashboard', { token: M, cid, label: '/dashboard（全新社區）' });
+  const ec = emptyDash.charts;
+  check('全新社區的工作台圖表為 6 個月、皆無資料', ec?.collection?.length === 6 && ec.cashflow.length === 6 && ec.collection.every((m) => m.rate === null)
+    && ec.cashflow.every((m) => m.income === 0 && m.expense === 0) && ec.expenseByCategory.length === 0 && ec.repairsByCategory.length === 0, JSON.stringify(ec).slice(0, 200));
   await call('GET', '/users', { token: M, expect: [403], label: '/users（非管理員）' });
   await call('PUT', '/community', { token: M, cid, body: { feeRate: 1 }, expect: [403], label: '/community（非管理員不能改設定）' });
 
@@ -133,6 +137,12 @@ async function main() {
   const ins = await call('POST', '/inspections', { token: M, cid, body: { title: '水塔清洗', dueDate: today, cycleMonths: 6 } });
   const insList = await call('GET', '/inspections', { token: M, cid });
   const done = await call('POST', `/inspections/${insList[0].id}/complete`, { token: M, cid, body: { result: '合格' } });
+  const ch = (await call('GET', '/dashboard', { token: M, cid, label: '/dashboard（圖表資料）' })).charts;
+  const cur = ch?.collection?.at(-1), flow = ch?.cashflow?.at(-1);
+  // 3500 那筆已作廢，只剩整戶收款 1000；應收 4 戶共 10500
+  check('工作台圖表：本月收繳率、收支、支出科目、報修類別', cur?.period === period && cur.paid === 1000 && cur.rate === 9.5
+    && flow.income === 1000 && flow.expense === 800 && ch.expenseByCategory.some((e) => e.label === '清潔費' && e.value === 800)
+    && ch.repairsByCategory.reduce((s, r) => s + r.value, 0) === 1, JSON.stringify({ cur, flow, e: ch?.expenseByCategory, r: ch?.repairsByCategory }));
   check('完成檢查自動排下一次（6 個月後）', !!done.next && done.next > plus(150), JSON.stringify(done));
 
   // ── 區權會：一般與重新召集門檻 ──
