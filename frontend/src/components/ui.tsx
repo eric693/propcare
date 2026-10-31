@@ -44,13 +44,18 @@ export function FormModal({ title, onClose, onSubmit, children, wide, submitText
   );
 }
 
-export function Field({ label, children, full, hint }: { label: string; children: ReactNode; full?: boolean; hint?: string }) {
+/**
+ * 表單欄位。內容含多個按鈕或控制項時請加 group：改用 div 包，
+ * 避免 <label> 把點擊空白處轉給第一個按鈕（例如點已選的戶別卻觸發「重選」）。
+ */
+export function Field({ label, children, full, hint, group }: { label: string; children: ReactNode; full?: boolean; hint?: string; group?: boolean }) {
+  const Tag = group ? 'div' : 'label';
   return (
-    <label className={`block ${full ? 'sm:col-span-2' : ''}`}>
+    <Tag className={`block ${full ? 'sm:col-span-2' : ''}`}>
       <span className="label">{label}</span>
       {children}
       {hint && <span className="block text-xs text-gray-400 mt-1 leading-relaxed">{hint}</span>}
-    </label>
+    </Tag>
   );
 }
 

@@ -182,7 +182,7 @@ export function Accounts() {
           <Field label="身分"><select className="input" value={edit.role} onChange={(e) => setEdit({ ...edit, role: e.target.value })}>{Object.entries(L.role).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
           <label className="flex items-center gap-2 text-sm self-end pb-2"><input type="checkbox" checked={edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} />啟用</label>
           {edit.role !== 'ADMIN' && (
-            <Field label="負責社區" full>
+            <Field label="負責社區" full group>
               <div className="grid sm:grid-cols-2 gap-1.5">{(communities ?? []).map((c) => (
                 <label key={c.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={edit.communityIds.includes(c.id)} onChange={(e) => setEdit({ ...edit, communityIds: e.target.checked ? [...edit.communityIds, c.id] : edit.communityIds.filter((x: string) => x !== c.id) })} />{c.name}</label>
               ))}</div>

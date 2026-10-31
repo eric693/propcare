@@ -105,7 +105,7 @@ function AddForm({ pkg, onClose, onSaved }: { pkg: any; onClose: () => void; onS
       toast(`取件碼 ${r.data.packages.map((p: any) => p.pickupCode).join('、')}${r.data.notified ? '，已 LINE 通知住戶' : ''}`);
       onSaved();
     }}>
-      <Field label="戶別（輸入戶號或姓名）" full>
+      <Field label="戶別（輸入戶號或姓名）" full group>
         {sel ? <div className="flex items-center gap-2"><b>{sel.label}</b><span className="text-sm text-gray-500">{sel.residents.map((r) => r.name).join('、')}</span><button type="button" className="btn-ghost btn-sm ml-auto" onClick={() => { setF({ ...f, unitId: '' }); setQ(''); }}>重選</button></div> : <>
           <input className="input" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="例如 5F-1 或 王" />
           {matches.length > 0 && <div className="mt-1 border border-gray-100 rounded-xl divide-y">{matches.map((u) => (
